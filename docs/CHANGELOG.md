@@ -6,6 +6,40 @@
 
 ## 2026-05-29
 
+### Hotfix — 世界观三面板上下文互注
+
+**来源**：社区用户（买辣椒）反馈世界观各模块 AI 生成的内容互不关联、缺乏逻辑一致性
+
+**问题**：世界起源面板和自然环境面板的 AI 上下文（`buildCtx`）只读本面板内已有字段，不读其他面板的设定。导致 AI 生成世界起源时看不到地理环境，生成自然环境时看不到世界来源和力量层次。只有人文环境面板读了跨面板数据。
+
+**修复**：
+- 世界起源面板 `buildCtx` 注入自然环境（世界结构/地貌/气候）+ 人文环境（历史线/种族/势力）
+- 自然环境面板 `buildCtx` 注入世界起源（世界来源/力量层次）+ 人文环境（历史线/种族/势力）
+- 人文环境面板原已读取跨面板数据，无需改动
+- 三面板形成完整上下文闭环
+
+**改动文件**：
+| 文件 | 改动 |
+|------|------|
+| `src/components/worldview/WorldviewOriginPanel.tsx` | `buildCtx` 增加 Natural + Humanity 关键字段注入 |
+| `src/components/worldview/WorldviewNaturalPanel.tsx` | `buildCtx` 增加 Origin + Humanity 关键字段注入 |
+
+---
+
+### Hotfix — 深色主题输入框白底修复
+
+**问题**：`bg-bg-input` CSS 类在 tailwind 配置中不存在，导致灵感反推和角色驱动剧情面板的 textarea/select 在非默认主题下显示白色背景。
+
+**修复**：统一替换为 `bg-bg-base`（6处）。
+
+**改动文件**：
+| 文件 | 改动 |
+|------|------|
+| `src/components/project/InspirationPanel.tsx` | 2 处 `bg-bg-input` → `bg-bg-base` |
+| `src/components/outline/CharacterDrivenPlotPanel.tsx` | 4 处 `bg-bg-input` → `bg-bg-base` |
+
+---
+
 ### Phase 26.4 — 灵感反推入口
 
 **来源**：社区用户反馈
