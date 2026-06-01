@@ -72,6 +72,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       db.masterWorks, db.importSessions,
       db.referenceChunkAnalysis, db.masterChunkAnalysis,
       db.masterChapterBeats, db.masterStyleMetrics,
+      db.worldGroups, db.worldGroupLinks,
     ], async () => {
       // 子表先删（依赖外键）
       if (refIds.length) await db.referenceChunkAnalysis.where('referenceId').anyOf(refIds).delete()
@@ -107,6 +108,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       await db.masterWorks.where('projectId').equals(id).delete()
       await db.snapshots.where('projectId').equals(id).delete()
       await db.importSessions.where('projectId').equals(id).delete()
+      // Phase 25.4: 多世界系统
+      await db.worldGroups.where('projectId').equals(id).delete()
+      await db.worldGroupLinks.where('projectId').equals(id).delete()
     })
     if (get().currentProjectId === id) {
       set({ currentProjectId: null })

@@ -16,6 +16,8 @@ export interface History {
   overview: string         // 历史总述
   eraSystem: string        // 纪年体系描述
   events: string           // HistoricalEvent[] JSON string
+  /** 所属世界组 ID（Phase 25.4） */
+  worldGroupId?: number | null
   createdAt: number
   updatedAt: number
 }

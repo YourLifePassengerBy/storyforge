@@ -10,6 +10,7 @@ import type {
   HistoricalTimelineEvent, HistoricalKeyword,
   MasterWork, MasterChunkAnalysis, MasterChapterBeat,
   MasterStyleMetrics, MasterInsight,
+  WorldGroup, WorldGroupLink,
 } from '../types'
 
 /**
@@ -63,6 +64,13 @@ export interface ProjectExportData {
   masterChapterBeats?: (Omit<MasterChapterBeat, 'id' | 'workId'> & { _workExportId: number })[]
   masterStyleMetrics?: (Omit<MasterStyleMetrics, 'id' | 'workId'> & { _workExportId: number })[]
   masterInsights?: Omit<MasterInsight, 'id'>[]
+
+  // ── v3: 多世界系统（Phase 25.4）──
+  worldGroups?: (Omit<WorldGroup, 'id' | 'projectId'> & { _exportId: number })[]
+  worldGroupLinks?: (Omit<WorldGroupLink, 'id' | 'projectId' | 'fromGroupId' | 'toGroupId'> & {
+    _fromGroupExportId: number
+    _toGroupExportId: number
+  })[]
 }
 
 /** 导出项目为 JSON */
@@ -81,6 +89,8 @@ export async function exportProjectJSON(projectId: number): Promise<ProjectExpor
     storyArcs, worldNodes, notes,
     refs, historicalTimelineEvents, historicalKeywords,
     masterWorks, masterInsights,
+    // v3
+    worldGroups, worldGroupLinks,
   ] = await Promise.all([
     db.worldviews.where('projectId').equals(projectId).toArray(),
     db.storyCores.where('projectId').equals(projectId).toArray(),
@@ -109,9 +119,16 @@ export async function exportProjectJSON(projectId: number): Promise<ProjectExpor
     db.masterWorks.where('projectId').equals(projectId).toArray(),
     // masterInsights 没有 projectId，但按 genre 存储，全部导出
     db.masterInsights.toArray(),
+    // v3: 多世界系统
+    db.worldGroups.where('projectId').equals(projectId).sortBy('order'),
+    db.worldGroupLinks.where('projectId').equals(projectId).toArray(),
   ])
 
   // ── 构建 ID 映射 ──
+
+  // 世界组 ID → 导出序号
+  const worldGroupIdMap = new Map<number, number>()
+  worldGroups.forEach((g, i) => { if (g.id) worldGroupIdMap.set(g.id, i) })
 
   // 大纲节点 ID → 导出序号
   const outlineIdMap = new Map<number, number>()
@@ -247,6 +264,17 @@ export async function exportProjectJSON(projectId: number): Promise<ProjectExpor
       return { ...rest, _workExportId: masterWorkIdMap.get(workId) ?? 0 }
     }),
     masterInsights: masterInsights.map(({ id: _, ...rest }) => rest),
+
+    // v3: 多世界系统
+    worldGroups: worldGroups.map(({ id, projectId: _, ...rest }) => ({
+      ...rest,
+      _exportId: worldGroupIdMap.get(id!) ?? 0,
+    })),
+    worldGroupLinks: worldGroupLinks.map(({ id: _, projectId: _p, fromGroupId, toGroupId, ...rest }) => ({
+      ...rest,
+      _fromGroupExportId: worldGroupIdMap.get(fromGroupId) ?? 0,
+      _toGroupExportId: worldGroupIdMap.get(toGroupId) ?? 0,
+    })),
   }
 }
 
@@ -504,6 +532,80 @@ export async function importProjectJSON(data: ProjectExportData): Promise<number
       if (existing) continue
     }
     await db.masterInsights.add(i as MasterInsight)
+  }
+
+  // 25. 世界组（v3，Phase 25.4）
+  const newWorldGroupIds = new Map<number, number>()
+  for (const g of data.worldGroups || []) {
+    const { _exportId, ...rest } = g
+    const newId = await db.worldGroups.add({
+      ...rest,
+      projectId: newProjectId,
+    } as WorldGroup) as number
+    newWorldGroupIds.set(_exportId, newId)
+  }
+
+  // 26. 世界组关系
+  for (const l of data.worldGroupLinks || []) {
+    const { _fromGroupExportId, _toGroupExportId, ...rest } = l
+    const fromId = newWorldGroupIds.get(_fromGroupExportId)
+    const toId = newWorldGroupIds.get(_toGroupExportId)
+    if (fromId && toId) {
+      await db.worldGroupLinks.add({
+        ...rest,
+        projectId: newProjectId,
+        fromGroupId: fromId,
+        toGroupId: toId,
+      } as WorldGroupLink)
+    }
+  }
+
+  // 27. 如果导入数据中包含 worldGroupId 引用，更新关联
+  // （worldGroupId 已经在数据记录中作为可选字段自然携带，
+  //   但其值指向旧 ID，需要映射到新 ID）
+  if (newWorldGroupIds.size > 0) {
+    // 更新 worldviews 的 worldGroupId
+    const allWv = await db.worldviews.where('projectId').equals(newProjectId).toArray()
+    for (const wv of allWv) {
+      if (wv.worldGroupId && newWorldGroupIds.has(wv.worldGroupId)) {
+        await db.worldviews.update(wv.id!, { worldGroupId: newWorldGroupIds.get(wv.worldGroupId) })
+      }
+    }
+    // 更新 powerSystems
+    const allPs = await db.powerSystems.where('projectId').equals(newProjectId).toArray()
+    for (const ps of allPs) {
+      if (ps.worldGroupId && newWorldGroupIds.has(ps.worldGroupId)) {
+        await db.powerSystems.update(ps.id!, { worldGroupId: newWorldGroupIds.get(ps.worldGroupId) })
+      }
+    }
+    // 更新 characters homeWorldGroupId
+    const allChars = await db.characters.where('projectId').equals(newProjectId).toArray()
+    for (const c of allChars) {
+      if (c.homeWorldGroupId && newWorldGroupIds.has(c.homeWorldGroupId)) {
+        await db.characters.update(c.id!, { homeWorldGroupId: newWorldGroupIds.get(c.homeWorldGroupId) })
+      }
+    }
+    // 更新 outlineNodes worldGroupId
+    const allNodes = await db.outlineNodes.where('projectId').equals(newProjectId).toArray()
+    for (const n of allNodes) {
+      if (n.worldGroupId && newWorldGroupIds.has(n.worldGroupId)) {
+        await db.outlineNodes.update(n.id!, { worldGroupId: newWorldGroupIds.get(n.worldGroupId) })
+      }
+    }
+    // 更新 geographies
+    const allGeo = await db.geographies.where('projectId').equals(newProjectId).toArray()
+    for (const g of allGeo) {
+      if (g.worldGroupId && newWorldGroupIds.has(g.worldGroupId)) {
+        await db.geographies.update(g.id!, { worldGroupId: newWorldGroupIds.get(g.worldGroupId) })
+      }
+    }
+    // 更新 histories
+    const allHist = await db.histories.where('projectId').equals(newProjectId).toArray()
+    for (const h of allHist) {
+      if (h.worldGroupId && newWorldGroupIds.has(h.worldGroupId)) {
+        await db.histories.update(h.id!, { worldGroupId: newWorldGroupIds.get(h.worldGroupId) })
+      }
+    }
   }
 
   return newProjectId

@@ -38,6 +38,8 @@ import type {
   HistoricalKeyword,
   ImportantLocation,
   WorldRulesProfile,
+  WorldGroup,
+  WorldGroupLink,
 } from '../types'
 
 class StoryForgeDB extends Dexie {
@@ -101,6 +103,10 @@ class StoryForgeDB extends Dexie {
 
   // Phase 32 —— 世界规则（真实与幻想）
   worldRulesProfiles!: Table<WorldRulesProfile, number>
+
+  // Phase 25.4 —— 多世界系统
+  worldGroups!: Table<WorldGroup, number>
+  worldGroupLinks!: Table<WorldGroupLink, number>
 
   constructor() {
     super('storyforge')
@@ -225,6 +231,12 @@ class StoryForgeDB extends Dexie {
     // Phase 32: 世界规则（真实与幻想）—— singleton per project
     this.version(21).stores({
       worldRulesProfiles: '++id, &projectId',
+    })
+
+    // Phase 25.4: 多世界系统
+    this.version(22).stores({
+      worldGroups: '++id, projectId, type, order',
+      worldGroupLinks: '++id, projectId, fromGroupId, toGroupId',
     })
   }
 }
