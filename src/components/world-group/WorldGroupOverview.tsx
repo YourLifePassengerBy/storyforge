@@ -7,8 +7,8 @@ import { useWorldGroupStore } from '../../stores/world-group'
 import { useAIStream } from '../../hooks/useAIStream'
 import { buildWorldSuggestPrompt, parseWorldSuggestOutput, type SuggestedWorld } from '../../lib/ai/world-group-ai'
 import { buildAllWorldsOverview } from '../../lib/ai/world-group-context'
-import { WORLD_GROUP_TYPE_LABELS } from '../../lib/types/world-group'
-import type { Project, WorldGroup, WorldGroupType } from '../../lib/types'
+import { WORLD_GROUP_TYPE_LABELS, WORLD_LINK_TYPE_LABELS } from '../../lib/types/world-group'
+import type { Project, WorldGroup, WorldGroupType, WorldGroupLinkType } from '../../lib/types'
 import WorldGroupDetail from './WorldGroupDetail'
 
 interface Props {
@@ -16,9 +16,14 @@ interface Props {
 }
 
 export default function WorldGroupOverview({ project }: Props) {
-  const { groups, links, loading, loadAll, createGroup, deleteGroup, ensurePrimaryGroup } = useWorldGroupStore()
+  const { groups, links, loading, loadAll, createGroup, deleteGroup, ensurePrimaryGroup, createLink, deleteLink } = useWorldGroupStore()
   const [editingGroup, setEditingGroup] = useState<WorldGroup | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
+  // 关系创建
+  const [showLinkForm, setShowLinkForm] = useState(false)
+  const [linkForm, setLinkForm] = useState<{ from: number | ''; to: number | ''; type: WorldGroupLinkType; name: string }>({
+    from: '', to: '', type: 'portal', name: '',
+  })
 
   // AI 建议世界
   const ai = useAIStream()
@@ -83,6 +88,20 @@ export default function WorldGroupOverview({ project }: Props) {
   const handleDelete = async (id: number) => {
     await deleteGroup(id)
     setConfirmDeleteId(null)
+  }
+
+  const handleCreateLink = async () => {
+    if (linkForm.from === '' || linkForm.to === '' || linkForm.from === linkForm.to) return
+    await createLink({
+      projectId: project.id!,
+      fromGroupId: Number(linkForm.from),
+      toGroupId: Number(linkForm.to),
+      linkType: linkForm.type,
+      name: linkForm.name || undefined,
+      bidirectional: false,
+    })
+    setLinkForm({ from: '', to: '', type: 'portal', name: '' })
+    setShowLinkForm(false)
   }
 
   // 如果正在编辑某个世界，显示详情
@@ -277,23 +296,90 @@ export default function WorldGroupOverview({ project }: Props) {
           </section>
 
           {/* 世界关系 */}
-          {links.length > 0 && (
+          {groups.length > 1 && (
             <section className="space-y-2">
-              <h3 className="text-sm font-semibold text-text-primary">世界关系</h3>
-              <div className="space-y-1">
-                {links.map(l => {
-                  const from = groups.find(g => g.id === l.fromGroupId)
-                  const to = groups.find(g => g.id === l.toGroupId)
-                  return (
-                    <div key={l.id} className="flex items-center gap-2 px-3 py-2 bg-bg-surface border border-border rounded-lg text-sm">
-                      <span>{from?.icon} {from?.name}</span>
-                      <ArrowRight className="w-3.5 h-3.5 text-text-muted" />
-                      <span>{to?.icon} {to?.name}</span>
-                      {l.name && <span className="text-text-muted">（{l.name}）</span>}
-                    </div>
-                  )
-                })}
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-text-primary">世界关系</h3>
+                <button
+                  onClick={() => setShowLinkForm(v => !v)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-bg-elevated text-text-secondary border border-border hover:text-accent hover:border-accent/50 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  添加关系
+                </button>
               </div>
+
+              {/* 关系创建表单 */}
+              {showLinkForm && (
+                <div className="flex items-center gap-2 flex-wrap p-3 bg-bg-surface border border-border rounded-lg">
+                  <select
+                    value={linkForm.from}
+                    onChange={e => setLinkForm(f => ({ ...f, from: e.target.value ? Number(e.target.value) : '' }))}
+                    className="px-2 py-1.5 bg-bg-base border border-border rounded text-xs text-text-primary focus:outline-none focus:border-accent"
+                  >
+                    <option value="">起点世界</option>
+                    {groups.map(g => <option key={g.id} value={g.id}>{g.icon} {g.name}</option>)}
+                  </select>
+                  <ArrowRight className="w-3.5 h-3.5 text-text-muted" />
+                  <select
+                    value={linkForm.to}
+                    onChange={e => setLinkForm(f => ({ ...f, to: e.target.value ? Number(e.target.value) : '' }))}
+                    className="px-2 py-1.5 bg-bg-base border border-border rounded text-xs text-text-primary focus:outline-none focus:border-accent"
+                  >
+                    <option value="">目标世界</option>
+                    {groups.map(g => <option key={g.id} value={g.id}>{g.icon} {g.name}</option>)}
+                  </select>
+                  <select
+                    value={linkForm.type}
+                    onChange={e => setLinkForm(f => ({ ...f, type: e.target.value as WorldGroupLinkType }))}
+                    className="px-2 py-1.5 bg-bg-base border border-border rounded text-xs text-text-primary focus:outline-none focus:border-accent"
+                  >
+                    {(Object.entries(WORLD_LINK_TYPE_LABELS) as [WorldGroupLinkType, string][]).map(([v, l]) => (
+                      <option key={v} value={v}>{l}</option>
+                    ))}
+                  </select>
+                  <input
+                    value={linkForm.name}
+                    onChange={e => setLinkForm(f => ({ ...f, name: e.target.value }))}
+                    placeholder="通道名称（可选）"
+                    className="px-2 py-1.5 bg-bg-base border border-border rounded text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent w-32"
+                  />
+                  <button
+                    onClick={handleCreateLink}
+                    disabled={linkForm.from === '' || linkForm.to === '' || linkForm.from === linkForm.to}
+                    className="px-3 py-1.5 text-xs rounded-lg bg-accent text-white hover:bg-accent-hover disabled:opacity-40 transition-colors"
+                  >
+                    创建
+                  </button>
+                </div>
+              )}
+
+              {links.length > 0 && (
+                <div className="space-y-1">
+                  {links.map(l => {
+                    const from = groups.find(g => g.id === l.fromGroupId)
+                    const to = groups.find(g => g.id === l.toGroupId)
+                    return (
+                      <div key={l.id} className="flex items-center gap-2 px-3 py-2 bg-bg-surface border border-border rounded-lg text-sm group">
+                        <span>{from?.icon} {from?.name}</span>
+                        <ArrowRight className="w-3.5 h-3.5 text-text-muted" />
+                        <span>{to?.icon} {to?.name}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-bg-elevated text-text-muted border border-border/50">
+                          {WORLD_LINK_TYPE_LABELS[l.linkType]}
+                        </span>
+                        {l.name && <span className="text-text-muted text-xs">（{l.name}）</span>}
+                        <button
+                          onClick={() => deleteLink(l.id!)}
+                          className="ml-auto p-1 rounded text-text-muted hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+                          title="删除关系"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </section>
           )}
 
