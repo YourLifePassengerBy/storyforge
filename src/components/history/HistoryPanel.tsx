@@ -1,5 +1,5 @@
 import { CTextarea, CInput } from '../shared/CompositionInput'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import {
   Plus, Trash2, ChevronDown, ChevronRight, Clock, Sparkles,
   BookOpen, Calendar, ShieldCheck, HelpCircle, Loader2, Tag, Filter
@@ -8,6 +8,7 @@ import { useHistoryStore } from '../../stores/project-singletons'
 import { useHistoricalStore } from '../../stores/historical'
 import { useChapterStore } from '../../stores/chapter'
 import { useWorldviewStore } from '../../stores/worldview'
+import { useWorldGroupStore } from '../../stores/world-group'
 import { useAIStream } from '../../hooks/useAIStream'
 import type { Project, HistoricalTimelineEvent, HistoricalEra, HistoricalKeyword, HistoricalKeywordCategory } from '../../lib/types'
 import { HISTORICAL_ERA_LABELS, KEYWORD_CATEGORY_LABELS } from '../../lib/types/history'
@@ -21,6 +22,23 @@ type TabKey = 'overview' | 'timeline' | 'keywords'
 
 export default function HistoryPanel({ project }: Props) {
   const [activeTab, setActiveTab] = useState<TabKey>('timeline')
+
+  // ── 多世界：世界标签 ──
+  const { groups, activeGroupId } = useWorldGroupStore()
+  const isMW = !!project.enableMultiWorld && groups.length > 1
+  const [worldTab, setWorldTab] = useState<number | 'all'>('all')
+  const worldTabInited = useRef(false)
+  useEffect(() => {
+    // 多世界首次进入默认落在当前活跃世界（之后尊重用户选择，含「一览」）
+    if (isMW && !worldTabInited.current && activeGroupId != null) {
+      setWorldTab(activeGroupId)
+      worldTabInited.current = true
+    }
+  }, [isMW, activeGroupId])
+  /** 当前编辑作用域的世界组 id（一览/单世界时为 null） */
+  const scopeGroupId: number | null = isMW && typeof worldTab === 'number' ? worldTab : null
+  /** 一览标签为只读（避免新建项归属不明） */
+  const canEdit = !isMW || worldTab !== 'all'
 
   // ── 历史总述 Store ──
   const { history, loadAll: loadHistory, save: saveHistory } = useHistoryStore()
@@ -45,7 +63,12 @@ export default function HistoryPanel({ project }: Props) {
   const [filterEra, setFilterEra] = useState<HistoricalEra | 'all'>('all')
 
   const ai = useAIStream()
-  const { worldview } = useWorldviewStore()
+  const { worldview, loadAll: loadWorldview } = useWorldviewStore()
+
+  // 多世界：让 worldview store 跟随当前世界标签，保证历史 AI 考证读到对的世界设定
+  useEffect(() => {
+    if (isMW) loadWorldview(project.id!, scopeGroupId)
+  }, [isMW, scopeGroupId, project.id, loadWorldview])
 
   /** 从世界观 store 提取与历史相关的上下文，供 AI 参考 */
   const getWorldContext = (): string => {
@@ -64,12 +87,25 @@ export default function HistoryPanel({ project }: Props) {
       : ''
   }
 
+  // 事件/关键词/章节按项目整体加载（一次），在组件内按世界过滤
   useEffect(() => {
-    loadHistory(project.id!)
     loadEvents(project.id!)
     loadKeywords(project.id!)
     loadChapters(project.id!)
-  }, [project.id, loadHistory, loadEvents, loadKeywords, loadChapters])
+  }, [project.id, loadEvents, loadKeywords, loadChapters])
+
+  // 历史概述单例：随当前世界标签加载（一览/单世界为 null）
+  useEffect(() => {
+    loadHistory(project.id!, scopeGroupId)
+  }, [project.id, scopeGroupId, loadHistory])
+
+  // 按当前世界标签过滤事件/关键词（一览或单世界 = 全部）
+  const scopedEvents = useMemo(() => (
+    (!isMW || worldTab === 'all') ? events : events.filter(e => e.worldGroupId === worldTab)
+  ), [events, isMW, worldTab])
+  const scopedKeywords = useMemo(() => (
+    (!isMW || worldTab === 'all') ? keywords : keywords.filter(k => k.worldGroupId === worldTab)
+  ), [keywords, isMW, worldTab])
 
   useEffect(() => {
     if (history) {
@@ -88,6 +124,7 @@ export default function HistoryPanel({ project }: Props) {
 
   // ── 时间线操作 ──
   const handleAddEvent = async () => {
+    if (!canEdit) return
     const newId = await addEvent({
       projectId: project.id!,
       era: 'custom',
@@ -96,18 +133,21 @@ export default function HistoryPanel({ project }: Props) {
       title: '新历史事件',
       description: '描述该事件的发生过程...',
       isHistorical: true,
+      ...(scopeGroupId != null ? { worldGroupId: scopeGroupId } : {}),
     })
     setExpandedId(newId)
   }
 
   // ── 关键词操作 ──
   const handleAddKeyword = async () => {
+    if (!canEdit) return
     const newId = await addKeyword({
       projectId: project.id!,
       keyword: '新历史关键词',
       category: 'technology',
       era: 'custom',
       description: '输入该关键词的基础概念或您想借鉴的方面...',
+      ...(scopeGroupId != null ? { worldGroupId: scopeGroupId } : {}),
     })
     setExpandedKeywordId(newId)
   }
@@ -225,12 +265,12 @@ ${kw.location ? `- 地理位置/范围：${kw.location}` : ''}
 
   // ── 过滤关键词 ──
   const filteredKeywords = useMemo(() => {
-    return keywords.filter((kw: HistoricalKeyword) => {
+    return scopedKeywords.filter((kw: HistoricalKeyword) => {
       const matchCategory = filterCategory === 'all' || kw.category === filterCategory
       const matchEra = filterEra === 'all' || kw.era === filterEra
       return matchCategory && matchEra
     })
-  }, [keywords, filterCategory, filterEra])
+  }, [scopedKeywords, filterCategory, filterEra])
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -250,6 +290,36 @@ ${kw.location ? `- 地理位置/范围：${kw.location}` : ''}
           </div>
         </div>
       </header>
+
+      {/* 多世界：世界标签 */}
+      {isMW && (
+        <div className="flex items-center gap-1.5 flex-wrap mb-4">
+          {groups.map(g => (
+            <button
+              key={g.id}
+              onClick={() => setWorldTab(g.id!)}
+              className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-full border transition-colors ${
+                worldTab === g.id
+                  ? 'bg-accent text-white border-accent'
+                  : 'bg-bg-base text-text-secondary border-border hover:border-accent/50'
+              }`}
+            >
+              <span>{g.icon || '🌐'}</span>{g.name}
+            </button>
+          ))}
+          <button
+            onClick={() => setWorldTab('all')}
+            className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
+              worldTab === 'all'
+                ? 'bg-accent text-white border-accent'
+                : 'bg-bg-base text-text-secondary border-border hover:border-accent/50'
+            }`}
+            title="并排查看所有世界的历史，只读"
+          >
+            📋 一览
+          </button>
+        </div>
+      )}
 
       {/* Tabs */}
       <nav className="flex items-center gap-1 border-b border-border mb-6">
@@ -326,15 +396,18 @@ ${kw.location ? `- 地理位置/范围：${kw.location}` : ''}
           <div className="lg:col-span-2 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium text-text-secondary">
-                时间轴事件 ({events.length})
+                时间轴事件 ({scopedEvents.length})
+                {isMW && worldTab === 'all' && <span className="ml-1 text-text-muted">· 一览（只读）</span>}
               </h3>
-              <button
-                onClick={handleAddEvent}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white text-xs rounded-lg hover:opacity-90 transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                添加事件
-              </button>
+              {canEdit && (
+                <button
+                  onClick={handleAddEvent}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white text-xs rounded-lg hover:opacity-90 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  添加事件
+                </button>
+              )}
             </div>
 
             {loadingEvents ? (
@@ -342,7 +415,7 @@ ${kw.location ? `- 地理位置/范围：${kw.location}` : ''}
                 <Loader2 className="w-5 h-5 animate-spin mr-2" />
                 加载时间线中...
               </div>
-            ) : events.length === 0 ? (
+            ) : scopedEvents.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border bg-bg-elevated/10 p-12 text-center">
                 <Clock className="w-8 h-8 text-text-muted mx-auto mb-3 opacity-40" />
                 <h4 className="text-sm font-medium text-text-primary mb-1">暂无时间线事件</h4>
@@ -357,7 +430,7 @@ ${kw.location ? `- 地理位置/范围：${kw.location}` : ''}
               </div>
             ) : (
               <div className="relative pl-6 border-l border-border/80 space-y-4 ml-3">
-                {events.map((evt) => {
+                {scopedEvents.map((evt) => {
                   const isExpanded = expandedId === evt.id
                   const eraLabel = HISTORICAL_ERA_LABELS[evt.era as HistoricalEra] || evt.era
                   const yearText = evt.year > 0 ? `公元 ${evt.year} 年` : `公元前 ${Math.abs(evt.year)} 年`
@@ -400,6 +473,13 @@ ${kw.location ? `- 地理位置/范围：${kw.location}` : ''}
                               {evt.isHistorical && (
                                 <span className="text-[10px] text-amber-400/70" title="此事件为史实锚点，AI 生成时不可违反">
                                   AI 不可违反
+                                </span>
+                              )}
+                              {/* 一览模式：显示事件所属世界 */}
+                              {isMW && worldTab === 'all' && evt.worldGroupId != null && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20">
+                                  {groups.find(g => g.id === evt.worldGroupId)?.icon || '🌐'}
+                                  {groups.find(g => g.id === evt.worldGroupId)?.name || '未知世界'}
                                 </span>
                               )}
                             </div>
@@ -730,13 +810,15 @@ ${kw.location ? `- 地理位置/范围：${kw.location}` : ''}
                 </select>
               </div>
 
-              <button
-                onClick={handleAddKeyword}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white text-xs rounded-lg hover:opacity-90 transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                添加关键词
-              </button>
+              {canEdit && (
+                <button
+                  onClick={handleAddKeyword}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white text-xs rounded-lg hover:opacity-90 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  添加关键词
+                </button>
+              )}
             </div>
 
             {loadingKeywords ? (

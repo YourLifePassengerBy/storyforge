@@ -622,6 +622,20 @@ export async function importProjectJSON(data: ProjectExportData): Promise<number
       await db.worldNodes.update(wn.id!, { worldGroupId: remap(wn.worldGroupId) })
     }
   }
+  // historicalTimelineEvents
+  const allHte = await db.historicalTimelineEvents.where('projectId').equals(newProjectId).toArray()
+  for (const e of allHte) {
+    if (e.worldGroupId !== undefined && e.worldGroupId !== null) {
+      await db.historicalTimelineEvents.update(e.id!, { worldGroupId: remap(e.worldGroupId) })
+    }
+  }
+  // historicalKeywords
+  const allHk = await db.historicalKeywords.where('projectId').equals(newProjectId).toArray()
+  for (const k of allHk) {
+    if (k.worldGroupId !== undefined && k.worldGroupId !== null) {
+      await db.historicalKeywords.update(k.id!, { worldGroupId: remap(k.worldGroupId) })
+    }
+  }
 
   return newProjectId
 }
