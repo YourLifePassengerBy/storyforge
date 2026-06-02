@@ -53,7 +53,9 @@ import StoryArcPanel from '../components/outline/StoryArcPanel'
 import CharacterDrivenPlotPanel from '../components/outline/CharacterDrivenPlotPanel'
 import InspirationPanel from '../components/project/InspirationPanel'
 import LocationPanel from '../components/location/LocationPanel'
+import WorldGroupOverview from '../components/world-group/WorldGroupOverview'
 import { useLocationStore } from '../stores/location'
+import { useWorldGroupStore } from '../stores/world-group'
 
 export default function WorkspacePage() {
   const { projectId } = useParams()
@@ -106,6 +108,8 @@ export default function WorkspacePage() {
         useLocationStore.getState().loadAll(pid),
         // Phase 32: 加载世界规则（首次访问自动创建空 profile，兼容旧项目）
         useWorldRulesStore.getState().loadProfile(pid),
+        // Phase 25.4: 多世界系统（始终加载，开关由 UI 层控制显隐）
+        useWorldGroupStore.getState().loadAll(pid),
       ])
 
       setLoading(false)
@@ -135,6 +139,10 @@ export default function WorkspacePage() {
         return <ReferencePanel project={project} />
       case 'inspiration':
         return <InspirationPanel project={project} />
+
+      // ── 设定库 - 多世界 ─────────────────────────────────────────────
+      case 'world-overview':
+        return <WorldGroupOverview project={project} />
 
       // ── 设定库 - 世界观 ─────────────────────────────────────────────
       case 'world-rules':
@@ -234,6 +242,11 @@ export default function WorkspacePage() {
         projectName={project.name}
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(v => !v)}
+        hiddenModules={useMemo(() => {
+          const hidden = new Set<SidebarModule>()
+          if (!project.enableMultiWorld) hidden.add('world-overview')
+          return hidden
+        }, [project.enableMultiWorld])}
       />
 
       {/* 主面板 */}

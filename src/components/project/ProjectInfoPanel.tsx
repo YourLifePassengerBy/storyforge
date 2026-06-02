@@ -172,6 +172,37 @@ export default function ProjectInfoPanel({ project, onUpdate }: ProjectInfoPanel
           />
         </div>
 
+        {/* 多世界开关 */}
+        <div className="p-4 bg-bg-surface border border-border rounded-lg">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
+                🌐 多世界模式
+              </div>
+              <p className="text-xs text-text-muted mt-0.5">
+                适用于诸天流/无限流/快穿/修仙多界等题材，开启后可为每个世界创建独立的世界观、力量体系、地理和角色设定
+              </p>
+            </div>
+            <button
+              onClick={async () => {
+                if (!project.id) return
+                const next = !project.enableMultiWorld
+                await updateProject(project.id, { enableMultiWorld: next })
+                onUpdate({ ...project, enableMultiWorld: next, updatedAt: Date.now() })
+              }}
+              className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ml-4 ${
+                project.enableMultiWorld ? 'bg-accent' : 'bg-border'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                  project.enableMultiWorld ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+
         <div className="pt-4 border-t border-border">
           <p className="text-text-muted text-xs">
             创建于 {new Date(project.createdAt).toLocaleString('zh-CN')} ·

@@ -19,6 +19,7 @@ export type SidebarModule =
   | 'inspiration'              // Phase 26.4 — 灵感反推
 
   // 设定库
+  | 'world-overview'        // Phase 25.4 — 世界总览（多世界）
   | 'world-rules'           // Phase 32 — 真实与幻想
   | 'worldview-origin'      // 占位 (P5)
   | 'worldview-natural'     // 占位 (P5)
@@ -118,6 +119,7 @@ export const NAV_TREE: TreeSection[] = [
     sectionId: 'lib',
     label: '设定库',
     children: [
+      leaf('world-overview', '世界总览', Globe),
       {
         kind: 'branch',
         branchId: 'lib.worldview',
