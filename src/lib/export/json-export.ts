@@ -24,6 +24,9 @@ import type {
  *       historicalTimelineEvents, historicalKeywords,
  *       masterWorks, masterChunkAnalysis, masterChapterBeats,
  *       masterStyleMetrics, masterInsights
+ *   3 — 多世界系统（2026-06-02，Phase 25.4）：
+ *       新增 worldGroups, worldGroupLinks；
+ *       现有表记录携带 worldGroupId / homeWorldGroupId / isCrossWorld 可选字段
  */
 export interface ProjectExportData {
   version: number
@@ -178,7 +181,7 @@ export async function exportProjectJSON(projectId: number): Promise<ProjectExpor
   const { id: _pid, ...projectData } = project
 
   return {
-    version: 2,
+    version: 3,
     exportedAt: Date.now(),
     project: projectData,
 
@@ -560,51 +563,63 @@ export async function importProjectJSON(data: ProjectExportData): Promise<number
     }
   }
 
-  // 27. 如果导入数据中包含 worldGroupId 引用，更新关联
-  // （worldGroupId 已经在数据记录中作为可选字段自然携带，
-  //   但其值指向旧 ID，需要映射到新 ID）
-  if (newWorldGroupIds.size > 0) {
-    // 更新 worldviews 的 worldGroupId
-    const allWv = await db.worldviews.where('projectId').equals(newProjectId).toArray()
-    for (const wv of allWv) {
-      if (wv.worldGroupId && newWorldGroupIds.has(wv.worldGroupId)) {
-        await db.worldviews.update(wv.id!, { worldGroupId: newWorldGroupIds.get(wv.worldGroupId) })
-      }
+  // 27. 重映射所有 worldGroupId 引用
+  // 导入的记录里 worldGroupId 还指向旧 ID，需要：
+  //   - 旧 ID 在映射表中 → 替换为新 ID
+  //   - 旧 ID 不在映射表（孤立引用，或没导入世界组）→ 清为 null
+  //     （否则旧 ID 可能撞上本项目自增产生的新世界组 ID，导致数据错乱）
+  const remap = (oldId: number | null | undefined): number | null => {
+    if (oldId === null || oldId === undefined) return null
+    return newWorldGroupIds.get(oldId) ?? null
+  }
+
+  // worldviews
+  const allWv = await db.worldviews.where('projectId').equals(newProjectId).toArray()
+  for (const wv of allWv) {
+    if (wv.worldGroupId !== undefined && wv.worldGroupId !== null) {
+      await db.worldviews.update(wv.id!, { worldGroupId: remap(wv.worldGroupId) })
     }
-    // 更新 powerSystems
-    const allPs = await db.powerSystems.where('projectId').equals(newProjectId).toArray()
-    for (const ps of allPs) {
-      if (ps.worldGroupId && newWorldGroupIds.has(ps.worldGroupId)) {
-        await db.powerSystems.update(ps.id!, { worldGroupId: newWorldGroupIds.get(ps.worldGroupId) })
-      }
+  }
+  // powerSystems
+  const allPs = await db.powerSystems.where('projectId').equals(newProjectId).toArray()
+  for (const ps of allPs) {
+    if (ps.worldGroupId !== undefined && ps.worldGroupId !== null) {
+      await db.powerSystems.update(ps.id!, { worldGroupId: remap(ps.worldGroupId) })
     }
-    // 更新 characters homeWorldGroupId
-    const allChars = await db.characters.where('projectId').equals(newProjectId).toArray()
-    for (const c of allChars) {
-      if (c.homeWorldGroupId && newWorldGroupIds.has(c.homeWorldGroupId)) {
-        await db.characters.update(c.id!, { homeWorldGroupId: newWorldGroupIds.get(c.homeWorldGroupId) })
-      }
+  }
+  // characters homeWorldGroupId
+  const allChars = await db.characters.where('projectId').equals(newProjectId).toArray()
+  for (const c of allChars) {
+    if (c.homeWorldGroupId !== undefined && c.homeWorldGroupId !== null) {
+      await db.characters.update(c.id!, { homeWorldGroupId: remap(c.homeWorldGroupId) })
     }
-    // 更新 outlineNodes worldGroupId
-    const allNodes = await db.outlineNodes.where('projectId').equals(newProjectId).toArray()
-    for (const n of allNodes) {
-      if (n.worldGroupId && newWorldGroupIds.has(n.worldGroupId)) {
-        await db.outlineNodes.update(n.id!, { worldGroupId: newWorldGroupIds.get(n.worldGroupId) })
-      }
+  }
+  // outlineNodes worldGroupId
+  const allNodes = await db.outlineNodes.where('projectId').equals(newProjectId).toArray()
+  for (const n of allNodes) {
+    if (n.worldGroupId !== undefined && n.worldGroupId !== null) {
+      await db.outlineNodes.update(n.id!, { worldGroupId: remap(n.worldGroupId) })
     }
-    // 更新 geographies
-    const allGeo = await db.geographies.where('projectId').equals(newProjectId).toArray()
-    for (const g of allGeo) {
-      if (g.worldGroupId && newWorldGroupIds.has(g.worldGroupId)) {
-        await db.geographies.update(g.id!, { worldGroupId: newWorldGroupIds.get(g.worldGroupId) })
-      }
+  }
+  // geographies
+  const allGeo = await db.geographies.where('projectId').equals(newProjectId).toArray()
+  for (const g of allGeo) {
+    if (g.worldGroupId !== undefined && g.worldGroupId !== null) {
+      await db.geographies.update(g.id!, { worldGroupId: remap(g.worldGroupId) })
     }
-    // 更新 histories
-    const allHist = await db.histories.where('projectId').equals(newProjectId).toArray()
-    for (const h of allHist) {
-      if (h.worldGroupId && newWorldGroupIds.has(h.worldGroupId)) {
-        await db.histories.update(h.id!, { worldGroupId: newWorldGroupIds.get(h.worldGroupId) })
-      }
+  }
+  // histories
+  const allHist = await db.histories.where('projectId').equals(newProjectId).toArray()
+  for (const h of allHist) {
+    if (h.worldGroupId !== undefined && h.worldGroupId !== null) {
+      await db.histories.update(h.id!, { worldGroupId: remap(h.worldGroupId) })
+    }
+  }
+  // worldNodes
+  const allWn = await db.worldNodes.where('projectId').equals(newProjectId).toArray()
+  for (const wn of allWn) {
+    if (wn.worldGroupId !== undefined && wn.worldGroupId !== null) {
+      await db.worldNodes.update(wn.id!, { worldGroupId: remap(wn.worldGroupId) })
     }
   }
 
