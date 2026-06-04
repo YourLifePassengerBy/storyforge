@@ -38,7 +38,14 @@ import type {
   HistoricalKeyword,
   ImportantLocation,
   WorldRulesProfile,
+  WorldGroup,
+  WorldGroupLink,
+  ItemLedgerEntry,
+  StoryTimelineEvent,
+  CodexCategory,
+  CodexEntry,
 } from '../types'
+import type { AIUsageEntry } from '../ai/usage-log'
 
 class StoryForgeDB extends Dexie {
   projects!: Table<Project>
@@ -101,6 +108,23 @@ class StoryForgeDB extends Dexie {
 
   // Phase 32 —— 世界规则（真实与幻想）
   worldRulesProfiles!: Table<WorldRulesProfile, number>
+
+  // Phase 25.4 —— 多世界系统
+  worldGroups!: Table<WorldGroup, number>
+  worldGroupLinks!: Table<WorldGroupLink, number>
+
+  // Phase 25.5.2-b —— 物品流水（游戏包裹式物品栏）
+  itemLedger!: Table<ItemLedgerEntry, number>
+
+  // Phase 25.5.2-a —— 故事进程年表
+  storyTimelineEvents!: Table<StoryTimelineEvent, number>
+
+  // Phase 35-a —— 词条系统（Codex）
+  codexCategories!: Table<CodexCategory, number>
+  codexEntries!: Table<CodexEntry, number>
+
+  // AI 消耗统计
+  aiUsageLog!: Table<AIUsageEntry, number>
 
   constructor() {
     super('storyforge')
@@ -225,6 +249,33 @@ class StoryForgeDB extends Dexie {
     // Phase 32: 世界规则（真实与幻想）—— singleton per project
     this.version(21).stores({
       worldRulesProfiles: '++id, &projectId',
+    })
+
+    // Phase 25.4: 多世界系统
+    this.version(22).stores({
+      worldGroups: '++id, projectId, type, order',
+      worldGroupLinks: '++id, projectId, fromGroupId, toGroupId',
+    })
+
+    // Phase 25.5.2-b: 物品流水（物品栏）
+    this.version(23).stores({
+      itemLedger: '++id, projectId, itemName, chapterId',
+    })
+
+    // Phase 25.5.2-a: 故事进程年表
+    this.version(24).stores({
+      storyTimelineEvents: '++id, projectId, chapterId, order',
+    })
+
+    // Phase 35-a: 词条系统（Codex）
+    this.version(25).stores({
+      codexCategories: '++id, projectId, domain, parentId, builtInKey, worldGroupId, order',
+      codexEntries: '++id, projectId, categoryId, worldGroupId, order',
+    })
+
+    // AI 消耗统计
+    this.version(26).stores({
+      aiUsageLog: '++id, projectId, timestamp, category, model',
     })
   }
 }

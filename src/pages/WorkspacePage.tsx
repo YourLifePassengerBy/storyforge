@@ -21,12 +21,12 @@ import PropertiesPanel from '../components/layout/PropertiesPanel'
 import ProjectInfoPanel from '../components/project/ProjectInfoPanel'
 import ReferencePanel from '../components/project/ReferencePanel'
 import SettingsPage from '../components/settings/SettingsPage'
+import UsageStatsPage from '../components/settings/UsageStatsPage'
 import VersionHistoryPanel from '../components/system/VersionHistoryPanel'
 import ImportDocPanel from '../components/system/ImportDocPanel'
 import PromptManagerPanel from '../components/settings/prompt/PromptManagerPanel'
 // MasterStudiesPanel 已整合进 ReferencePanel（Phase 20）
 import DataManagementPanel from '../components/data/DataManagementPanel'
-import WorldviewPanel from '../components/worldview/WorldviewPanel'
 import WorldRulesPanel from '../components/worldview/WorldRulesPanel'
 import StoryCorePanel from '../components/worldview/StoryCorePanel'
 import PowerSystemPanel from '../components/worldview/PowerSystemPanel'
@@ -45,13 +45,21 @@ import ForeshadowPanel from '../components/foreshadow/ForeshadowPanel'
 import GeographyPanel from '../components/geography/GeographyPanel'
 import HistoryPanel from '../components/history/HistoryPanel'
 import ItemSystemPanel from '../components/items/ItemSystemPanel'
+import CodexPanel from '../components/codex/CodexPanel'
 import CreativeRulesPanel from '../components/rules/CreativeRulesPanel'
 import CharacterRelationPanel from '../components/relations/CharacterRelationPanel'
 import WorldMapPanel from '../components/geography/WorldMapPanel'
 import StatePanel from '../components/state/StatePanel'
 import StoryArcPanel from '../components/outline/StoryArcPanel'
+import CharacterDrivenPlotPanel from '../components/outline/CharacterDrivenPlotPanel'
+import InspirationPanel from '../components/project/InspirationPanel'
 import LocationPanel from '../components/location/LocationPanel'
+import InventoryPanel from '../components/items/InventoryPanel'
+import StoryTimelinePanel from '../components/timeline/StoryTimelinePanel'
+import SceneVerifyPanel from '../components/scene/SceneVerifyPanel'
+import WorldGroupOverview from '../components/world-group/WorldGroupOverview'
 import { useLocationStore } from '../stores/location'
+import { useWorldGroupStore } from '../stores/world-group'
 
 export default function WorkspacePage() {
   const { projectId } = useParams()
@@ -68,6 +76,14 @@ export default function WorkspacePage() {
     if (!currentProjectId) return null
     return projects.find(p => p.id === currentProjectId) || null
   }, [projects, currentProjectId])
+
+  // 侧栏隐藏模块（多世界关闭时隐藏世界总览）。必须在所有提前 return 之前调用，
+  // 否则 hook 数量在不同渲染间不一致，会报 "Rendered more hooks than..."
+  const hiddenModules = useMemo(() => {
+    const hidden = new Set<SidebarModule>()
+    if (!project?.enableMultiWorld) hidden.add('world-overview')
+    return hidden
+  }, [project?.enableMultiWorld])
 
   // 自动定时备份（每 5 分钟）
   useAutoBackup(project?.id ?? null)
@@ -104,6 +120,8 @@ export default function WorkspacePage() {
         useLocationStore.getState().loadAll(pid),
         // Phase 32: 加载世界规则（首次访问自动创建空 profile，兼容旧项目）
         useWorldRulesStore.getState().loadProfile(pid),
+        // Phase 25.4: 多世界系统（始终加载，开关由 UI 层控制显隐）
+        useWorldGroupStore.getState().loadAll(pid),
       ])
 
       setLoading(false)
@@ -131,6 +149,12 @@ export default function WorkspacePage() {
         return <ProjectInfoPanel project={project} onUpdate={() => useProjectStore.getState().loadProjects()} />
       case 'references':
         return <ReferencePanel project={project} />
+      case 'inspiration':
+        return <InspirationPanel project={project} />
+
+      // ── 设定库 - 多世界 ─────────────────────────────────────────────
+      case 'world-overview':
+        return <WorldGroupOverview project={project} />
 
       // ── 设定库 - 世界观 ─────────────────────────────────────────────
       case 'world-rules':
@@ -141,9 +165,6 @@ export default function WorkspacePage() {
         return <WorldviewNaturalPanel project={project} />
       case 'worldview-humanity':
         return <WorldviewHumanityPanel project={project} />
-      // 旧入口暂时映射到旧面板（P5/P6 改造时迁移到上面 3 个）
-      case 'worldview':
-        return <WorldviewPanel project={project} />
       case 'geography':
         return <GeographyPanel project={project} />
       case 'world-map':
@@ -152,6 +173,8 @@ export default function WorkspacePage() {
         return <HistoryPanel project={project} />
       case 'items':
         return <ItemSystemPanel project={project} />
+      case 'codex':
+        return <CodexPanel project={project} />
       case 'power-system':
         return <PowerSystemPanel project={project} />
 
@@ -179,6 +202,8 @@ export default function WorkspacePage() {
         return <CreativeRulesPanel project={project} />
       case 'outline':
         return <OutlinePanel project={project} onOpenChapter={handleOpenChapter} />
+      case 'character-driven-plot':
+        return <CharacterDrivenPlotPanel project={project} />
       case 'detailed-outline':
         return <DetailedOutlinePanel project={project} />
       case 'chapters-list':
@@ -193,6 +218,12 @@ export default function WorkspacePage() {
         return <StoryArcPanel project={project} />
       case 'state-table':
         return <StatePanel project={project} />
+      case 'inventory':
+        return <InventoryPanel project={project} />
+      case 'story-timeline':
+        return <StoryTimelinePanel project={project} />
+      case 'scene-verify':
+        return <SceneVerifyPanel project={project} />
 
       // 作品学习已整合进项目参考 → 深度分析 tab（Phase 20）
       case 'master-studies':
@@ -209,6 +240,8 @@ export default function WorkspacePage() {
         return <ImportDocPanel project={project} />
       case 'settings':
         return <SettingsPage />
+      case 'usage-stats':
+        return <UsageStatsPage project={project} />
       case 'data-management':
       case 'backup':
       case 'export':
@@ -228,6 +261,7 @@ export default function WorkspacePage() {
         projectName={project.name}
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(v => !v)}
+        hiddenModules={hiddenModules}
       />
 
       {/* 主面板 */}

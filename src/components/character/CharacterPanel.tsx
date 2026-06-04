@@ -5,10 +5,13 @@ import {
 import { InlineInput, InlineTextarea } from '../shared/InlineEdit'
 import { useCharacterStore } from '../../stores/character'
 import { useWorldviewStore } from '../../stores/worldview'
+import { useWorldGroupStore } from '../../stores/world-group'
 import { useAIConfigStore } from '../../stores/ai-config'
 import { useAIStream } from '../../hooks/useAIStream'
 import { buildCharacterPrompt } from '../../lib/ai/adapters/character-adapter'
 import { buildWorldContext } from '../../lib/ai/context-builder'
+import { buildCodexContext } from '../../lib/ai/codex-context'
+import { buildCurrentWorldContext } from '../../lib/ai/world-group-context'
 import { parseCharacterOutput } from '../../lib/ai/parse-character-output'
 import AIStreamOutput from '../shared/AIStreamOutput'
 import PromptRunPanel from '../shared/PromptRunPanel'
@@ -52,6 +55,7 @@ interface Props { project: Project }
 export default function CharacterPanel({ project }: Props) {
   const { characters, loadAll, addCharacter, updateCharacter, deleteCharacter } = useCharacterStore()
   const { worldview, storyCore, powerSystem } = useWorldviewStore()
+  const { groups, activeGroupId } = useWorldGroupStore()
   const { config: aiConfig } = useAIConfigStore()
   const [selected, setSelected] = useState<number | null>(null)
   const [hint, setHint] = useState('')
@@ -60,11 +64,28 @@ export default function CharacterPanel({ project }: Props) {
   const [parameterValues, setParameterValues] = useState<Record<string, unknown>>({})
   const [systemOverride, setSystemOverride] = useState<string | null>(null)
   const [userOverride, setUserOverride] = useState<string | null>(null)
+  // 多世界：角色世界过滤器（'all' | 'cross' | 世界组 id）
+  const [worldFilter, setWorldFilter] = useState<'all' | 'cross' | number>('all')
   const ai = useAIStream()
 
   useEffect(() => { loadAll(project.id!) }, [project.id, loadAll])
 
+  // 多世界过滤：跨世界角色在任意世界都显示
+  const displayedChars = !project.enableMultiWorld || worldFilter === 'all'
+    ? characters
+    : worldFilter === 'cross'
+      ? characters.filter(c => c.isCrossWorld)
+      : characters.filter(c => c.isCrossWorld || c.homeWorldGroupId === worldFilter)
+
   const selectedChar = characters.find(c => c.id === selected)
+
+  // 多世界模式下新建角色时归属的世界（过滤器选了具体世界则用它，否则用当前活跃世界）
+  const newCharHomeWorld = (): number | null => {
+    if (!project.enableMultiWorld) return null
+    if (typeof worldFilter === 'number') return worldFilter
+    if (worldFilter === 'cross') return null
+    return activeGroupId
+  }
 
   const handleAdd = async (role: CharacterRole = 'supporting') => {
     setShowRolePicker(false)
@@ -72,6 +93,8 @@ export default function CharacterPanel({ project }: Props) {
       projectId: project.id!, name: '新角色', role,
       shortDescription: '', appearance: '', personality: '',
       background: '', motivation: '', abilities: '', relationships: '', arc: '',
+      homeWorldGroupId: newCharHomeWorld(),
+      isCrossWorld: project.enableMultiWorld && worldFilter === 'cross',
     })
     setSelected(id)
   }
@@ -80,7 +103,7 @@ export default function CharacterPanel({ project }: Props) {
     if (selectedChar?.id) updateCharacter(selectedChar.id, { [field]: value })
   }
 
-  const handleAIGenerate = () => {
+  const handleAIGenerate = async () => {
     // 统计阵容缺口
     const roleCounts: Record<CharacterRole, number> = {
       protagonist: 0, antagonist: 0, supporting: 0, minor: 0, npc: 0, extra: 0,
@@ -89,7 +112,17 @@ export default function CharacterPanel({ project }: Props) {
     const rosterGap = `当前阵容：主角 ${roleCounts.protagonist}、反派 ${roleCounts.antagonist}、配角 ${roleCounts.supporting}、次要 ${roleCounts.minor}、NPC ${roleCounts.npc}、路人 ${roleCounts.extra}`
     const existing = characters.map(c => `${c.name}（${ROLE_LABELS[c.role]}）`).join('、')
     const enrichedHint = [hint, rosterGap].filter(Boolean).join('\n')
-    const worldCtx = buildWorldContext(worldview, storyCore, powerSystem)
+    // 多世界：按当前选中/活跃世界读取上下文（此前写死单世界）
+    const targetWorld = project.enableMultiWorld
+      ? (typeof worldFilter === 'number' ? worldFilter : activeGroupId)
+      : null
+    let worldCtx: string
+    if (targetWorld != null) {
+      worldCtx = await buildCurrentWorldContext(project.id!, targetWorld)
+    } else {
+      const codexCtx = await buildCodexContext(project.id!, null)
+      worldCtx = [buildWorldContext(worldview, storyCore, powerSystem), codexCtx].filter(Boolean).join('\n\n')
+    }
     const opts = {
       parameterValues: Object.keys(parameterValues).length > 0 ? parameterValues : undefined,
       overrides: (systemOverride != null || userOverride != null) ? {
@@ -98,7 +131,7 @@ export default function CharacterPanel({ project }: Props) {
       } : undefined,
     }
     const messages = buildCharacterPrompt(project.name, project.genre ?? '', worldCtx, existing, enrichedHint, opts)
-    ai.start(messages)
+    ai.start(messages, undefined, { category: 'character.generate', projectId: project.id! })
   }
 
   return (
@@ -148,6 +181,45 @@ export default function CharacterPanel({ project }: Props) {
         <span className="text-xs text-text-muted ml-auto">角色册 · {characters.length}</span>
       </div>
 
+      {/* 多世界：世界过滤器 */}
+      {project.enableMultiWorld && groups.length > 1 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <button
+            onClick={() => setWorldFilter('all')}
+            className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
+              worldFilter === 'all'
+                ? 'bg-accent text-white border-accent'
+                : 'bg-bg-base text-text-secondary border-border hover:border-accent/50'
+            }`}
+          >
+            全部
+          </button>
+          {groups.map(g => (
+            <button
+              key={g.id}
+              onClick={() => setWorldFilter(g.id!)}
+              className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-full border transition-colors ${
+                worldFilter === g.id
+                  ? 'bg-accent text-white border-accent'
+                  : 'bg-bg-base text-text-secondary border-border hover:border-accent/50'
+              }`}
+            >
+              <span>{g.icon || '🌐'}</span>{g.name}
+            </button>
+          ))}
+          <button
+            onClick={() => setWorldFilter('cross')}
+            className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
+              worldFilter === 'cross'
+                ? 'bg-accent text-white border-accent'
+                : 'bg-bg-base text-text-secondary border-border hover:border-accent/50'
+            }`}
+          >
+            🌐 跨世界
+          </button>
+        </div>
+      )}
+
       {/* 调参浮窗 */}
       <PromptRunPanel
         moduleKey="character.generate"
@@ -193,6 +265,7 @@ export default function CharacterPanel({ project }: Props) {
               abilities:        parsed?.abilities        || '',
               relationships:    parsed?.relationships    || '',
               arc:              parsed?.arc              || '',
+              homeWorldGroupId: newCharHomeWorld(),
             })
             setSelected(id)
           }}
@@ -211,7 +284,7 @@ export default function CharacterPanel({ project }: Props) {
         <div className="flex gap-4">
           {/* 左侧角色列表 */}
           <div className="w-40 shrink-0 space-y-0.5">
-            {characters.map((c, i) => {
+            {displayedChars.map((c, i) => {
               const active = selected === c.id
               const colorClass = GLYPH_COLORS[i % GLYPH_COLORS.length]
               return (
@@ -245,6 +318,8 @@ export default function CharacterPanel({ project }: Props) {
                 projectId={project.id!}
                 onUpdate={handleUpdate}
                 onDelete={() => { deleteCharacter(selectedChar.id!); setSelected(null) }}
+                multiWorld={!!project.enableMultiWorld}
+                worldGroups={groups}
               />
             ) : (
               <div className="flex items-center justify-center h-64 text-text-muted text-sm">
@@ -261,13 +336,15 @@ export default function CharacterPanel({ project }: Props) {
 // ── 角色详情卡（design 风格） ────────────────────────────────────
 
 function CharacterDetailCard({
-  char, charIndex, projectId, onUpdate, onDelete,
+  char, charIndex, projectId, onUpdate, onDelete, multiWorld, worldGroups,
 }: {
   char: Character
   charIndex: number
   projectId: number
   onUpdate: (f: keyof Character, v: string) => void
   onDelete: () => void
+  multiWorld?: boolean
+  worldGroups?: import('../../lib/types').WorldGroup[]
 }) {
   const { updateCharacter } = useCharacterStore()
   const [expanded, setExpanded] = useState(true)
@@ -306,6 +383,31 @@ function CharacterDetailCard({
               <option value="good">正派</option>
               <option value="evil">反派</option>
             </select>
+
+            {/* 多世界：归属世界 + 跨世界标记 */}
+            {multiWorld && (
+              <>
+                <select
+                  value={char.isCrossWorld ? 'cross' : (char.homeWorldGroupId ?? '')}
+                  onChange={e => {
+                    if (!char.id) return
+                    const v = e.target.value
+                    if (v === 'cross') {
+                      updateCharacter(char.id, { isCrossWorld: true, homeWorldGroupId: null })
+                    } else {
+                      updateCharacter(char.id, { isCrossWorld: false, homeWorldGroupId: v ? Number(v) : null })
+                    }
+                  }}
+                  className="px-1.5 py-0.5 bg-bg-elevated text-text-secondary text-[10px] rounded border border-border focus:outline-none focus:border-accent cursor-pointer"
+                  title="角色所属世界"
+                >
+                  <option value="cross">🌐 跨世界</option>
+                  {(worldGroups || []).map(g => (
+                    <option key={g.id} value={g.id}>{g.icon || '🌐'} {g.name}</option>
+                  ))}
+                </select>
+              </>
+            )}
           </div>
 
           {/* 名字（可编辑） */}

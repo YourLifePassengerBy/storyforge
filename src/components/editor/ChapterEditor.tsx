@@ -13,7 +13,9 @@ import { useBeforeUnload } from '../../hooks/useBeforeUnload'
 import { buildChapterContentPrompt, buildContinuePrompt, buildPolishPrompt, buildExpandPrompt, buildDeAIPrompt } from '../../lib/ai/adapters/chapter-adapter'
 import { buildStateExtractPrompt, parseStateDiffs } from '../../lib/ai/adapters/state-extract-adapter'
 import { buildSummaryPrompt } from '../../lib/ai/adapters/summary-adapter'
-import { buildWorldContext, buildCharacterContext, filterActiveCharacters, getContextMemo, buildRefAnalysisContext, buildMasterInsightContext } from '../../lib/ai/context-builder'
+import { buildWorldContext, buildCharacterContext, filterActiveCharacters, getContextMemo, buildRefAnalysisContext, buildMasterInsightContext, buildCreativeRulesContext, buildLocationContext } from '../../lib/ai/context-builder'
+import { buildCurrentWorldContext } from '../../lib/ai/world-group-context'
+import { buildCodexContext } from '../../lib/ai/codex-context'
 import { buildGenreConstraintContext } from '../../lib/ai/genre-metadata'
 import { buildStylePromptInjection } from '../../lib/ai/writing-styles'
 import { buildMemory, type MemoryTaskType } from '../../lib/ai/memory-builder'
@@ -126,9 +128,49 @@ export default function ChapterEditor({ project, outlineNodeId }: Props) {
 
   const outlineNode = currentChapter ? nodes.find(n => n.id === currentChapter.outlineNodeId) : null
   const memo = getContextMemo(project.id!)
-  const worldCtx = [memo, buildWorldContext(worldview, storyCore, powerSystem)].filter(Boolean).join('\n\n')
-  // Phase G2: 过滤活跃角色
-  const activeChars = filterActiveCharacters(characters, currentChapter?.id)
+
+  // 多世界：沿父链找到所属卷的 worldGroupId
+  const chapterWorldGroupId = useMemo(() => {
+    if (!project.enableMultiWorld || !outlineNode) return null
+    let cur: typeof outlineNode | undefined = outlineNode
+    const guard = new Set<number>()
+    while (cur && !guard.has(cur.id!)) {
+      if (cur.worldGroupId != null) return cur.worldGroupId
+      guard.add(cur.id!)
+      cur = cur.parentId != null ? nodes.find(n => n.id === cur!.parentId) : undefined
+    }
+    return null
+  }, [project.enableMultiWorld, outlineNode, nodes])
+
+  // 多世界：异步构建本卷所属世界的完整上下文
+  const [multiWorldCtx, setMultiWorldCtx] = useState('')
+  useEffect(() => {
+    if (chapterWorldGroupId == null) { setMultiWorldCtx(''); return }
+    let cancelled = false
+    buildCurrentWorldContext(project.id!, chapterWorldGroupId).then(ctx => {
+      if (!cancelled) setMultiWorldCtx(ctx)
+    })
+    return () => { cancelled = true }
+  }, [project.id, chapterWorldGroupId])
+
+  // 单世界：异步读取设定词条（多世界模式下词条已包含在 multiWorldCtx 内，避免重复注入）
+  const [singleCodexCtx, setSingleCodexCtx] = useState('')
+  useEffect(() => {
+    if (chapterWorldGroupId != null) { setSingleCodexCtx(''); return }
+    let cancelled = false
+    buildCodexContext(project.id!, null).then(ctx => { if (!cancelled) setSingleCodexCtx(ctx) })
+    return () => { cancelled = true }
+  }, [project.id, chapterWorldGroupId])
+
+  // 多世界模式且本卷有所属世界 → 用世界上下文；否则走原全局世界观 + 词条
+  const worldCtx = chapterWorldGroupId != null
+    ? [memo, multiWorldCtx].filter(Boolean).join('\n\n')
+    : [memo, buildWorldContext(worldview, storyCore, powerSystem), singleCodexCtx].filter(Boolean).join('\n\n')
+  // Phase G2: 过滤活跃角色（多世界下先按所属世界过滤：本世界角色 + 跨世界角色）
+  const worldScopedChars = chapterWorldGroupId != null
+    ? characters.filter(c => c.isCrossWorld || c.homeWorldGroupId === chapterWorldGroupId)
+    : characters
+  const activeChars = filterActiveCharacters(worldScopedChars, currentChapter?.id)
   const charCtx = buildCharacterContext(activeChars)
 
   // A2: 按需召回 — 根据章节大纲+标题+已有文本筛选相关状态卡
@@ -213,9 +255,15 @@ export default function ChapterEditor({ project, outlineNodeId }: Props) {
     // Phase E: 题材约束 + 写作风格注入
     const genreCtx = buildGenreConstraintContext(project.genre)
     const styleCtx = project.writingStyleId ? buildStylePromptInjection(project.writingStyleId) : ''
+    // 创作规则注入（写作风格/视角/基调/禁忌/一致性——此前从不进入 prompt）
+    const rulesCtx = buildCreativeRulesContext(creativeRules)
+    // 重要地点注入（此前重要地点表从不进入写作链路）
+    const locationCtx = await buildLocationContext(project.id!)
 
     // 引用手法追加到末尾（不计入三层记忆预算）
     const parts = [memory.fullContext]
+    if (rulesCtx) parts.push(rulesCtx)
+    if (locationCtx) parts.push(locationCtx)
     if (genreCtx) parts.push(genreCtx)
     if (styleCtx) parts.push(styleCtx)
     if (refCtx) parts.push(refCtx)
@@ -241,7 +289,7 @@ export default function ChapterEditor({ project, outlineNodeId }: Props) {
     setContextBudget(calculateBudget(aiConfig.provider, aiConfig.model, segments))
 
     setAIAction('generate')
-    ai.start(messages)
+    ai.start(messages, undefined, { category: 'chapter.content', projectId: project.id! })
   }
 
   const handleContinue = async () => {
@@ -249,7 +297,7 @@ export default function ChapterEditor({ project, outlineNodeId }: Props) {
     const fullCtx = await buildFullWorldCtx('write')
     const messages = buildContinuePrompt(plainText, outlineNode.summary, fullCtx)
     setAIAction('continue')
-    ai.start(messages)
+    ai.start(messages, undefined, { category: 'chapter.continue', projectId: project.id! })
   }
 
   const handlePolish = () => {
@@ -257,7 +305,7 @@ export default function ChapterEditor({ project, outlineNodeId }: Props) {
     if (!selected) return
     const messages = buildPolishPrompt(selected, customInstruction || '优化文笔，使表达更生动')
     setAIAction('polish')
-    ai.start(messages)
+    ai.start(messages, undefined, { category: 'chapter.polish', projectId: project.id! })
   }
 
   const handleExpand = () => {
@@ -265,7 +313,7 @@ export default function ChapterEditor({ project, outlineNodeId }: Props) {
     if (!selected) return
     const messages = buildExpandPrompt(selected)
     setAIAction('expand')
-    ai.start(messages)
+    ai.start(messages, undefined, { category: 'chapter.expand', projectId: project.id! })
   }
 
   const handleDeAI = () => {
@@ -273,7 +321,7 @@ export default function ChapterEditor({ project, outlineNodeId }: Props) {
     if (!selected) return
     const messages = buildDeAIPrompt(selected)
     setAIAction('deai')
-    ai.start(messages)
+    ai.start(messages, undefined, { category: 'chapter.deai', projectId: project.id! })
   }
 
   // ── 状态提取 ──
@@ -285,7 +333,7 @@ export default function ChapterEditor({ project, outlineNodeId }: Props) {
       const chapterTitle = outlineNode?.title || currentChapter.title || '未知章节'
       const messages = buildStateExtractPrompt(stateCtx, chapterTitle, plainText)
       console.log('[StateExtract] 开始提取，章节:', chapterTitle)
-      const raw = await stateAI.start(messages)
+      const raw = await stateAI.start(messages, undefined, { category: 'state.extract', projectId: project.id! })
       const { diffs, error } = parseStateDiffs(raw)
       if (error) {
         console.error('[StateExtract] 解析失败:', error)
@@ -317,7 +365,7 @@ export default function ChapterEditor({ project, outlineNodeId }: Props) {
       const chapterTitle = outlineNode?.title || currentChapter.title || '未知章节'
       const messages = buildSummaryPrompt(chapterTitle, text)
       console.log('[Summary] 自动生成章节摘要:', chapterTitle)
-      const raw = await summaryAI.start(messages)
+      const raw = await summaryAI.start(messages, undefined, { category: 'summary', projectId: project.id! })
       if (raw) {
         const summary = raw.trim()
         await updateChapter(currentChapter.id, { summary })
@@ -341,7 +389,7 @@ export default function ChapterEditor({ project, outlineNodeId }: Props) {
       const chapterTitle = outlineNode?.title || currentChapter?.title || '未知章节'
       const messages = buildStateExtractPrompt(stateCtx, chapterTitle, text)
       console.log('[AutoPost] 自动提取状态:', chapterTitle)
-      const raw = await stateAI.start(messages)
+      const raw = await stateAI.start(messages, undefined, { category: 'state.extract', projectId: project.id! })
       const { diffs, error } = parseStateDiffs(raw)
       if (error) {
         console.error('[AutoPost] 状态提取解析失败:', error)
