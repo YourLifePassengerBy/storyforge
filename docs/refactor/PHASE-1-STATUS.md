@@ -14,7 +14,7 @@
 | 1.1b 生命周期切换到派生 API + 启动校验 | ✅ Done | `refactor/phase-1-task-1.1b` | deleteProject/deleteGroup/migrate 改派生;main.tsx 接入 validateRegistry;手写表清单全消失;27 测试持续全绿 |
 | 1.2a 建 FIELD_REGISTRY + AdoptionSchema + adopt() | ✅ Done | `refactor/phase-1-task-1.2a` | 纯新增写回层;不切现有调用方 |
 | 1.2b 写回调用方切换到 adopt() | ✅ Done | `refactor/phase-1-task-1.2b` | 灵感反推/导入/工作流/saveXxx/AI 采纳路径切到 `adopt()` |
-| 1.3a 建 CONTEXT_SOURCES + assembleContext() | Pending | TBD | 纯新增读取层 |
+| 1.3a 建 CONTEXT_SOURCES + assembleContext() | ✅ Done | `refactor/phase-1-task-1.3a` | 纯新增读取层;登记 18 个上下文源 + 真裁剪装配 API |
 | 1.3b 生成入口切换到 assembleContext() | Pending | TBD | 32+ 生成入口,章节正文优先 |
 
 ---
@@ -130,3 +130,21 @@
 - `npm run build` 通过。Vite 仍输出既有 dynamic-import / chunk-size warning,无构建失败。
 
 **下一步(1.3a)**:新增 `CONTEXT_SOURCES + assembleContext()` 统一上下文层,先纯新增不切调用方。
+
+### 2026-06-08 22:22:39 CST · 1.3a 完成(by Codex)
+
+- 扩展 `src/lib/registry/types.ts`:新增 ContextSource / AssembleContextInput / AssembleContextResult 等上下文层类型。
+- 新增 `src/lib/registry/context-sources.ts`:登记 18 个上下文源,覆盖上下文快照、章节大纲、上一章结尾、世界观、故事核心、力量体系、词条、角色、创作规则、真实幻想规则、历史、地点、伏笔、故事线、情感节拍、状态卡、引用手法、大师洞察。
+- 新增 `src/lib/registry/assemble-context.ts`:实现统一装配入口,按 source requirements 读取,按 source budget 截断,并按 L3→L2→L1 真裁剪最终输出文本。
+- `checkRegistry()` 纳入 CONTEXT_SOURCES 校验:world source 必须显式要求 worldGroupId,node/chapter source 必须声明必要输入,key 不重复,budget 为正。
+- 新增 `tests/registry/assemble-context.test.ts`:覆盖注册表校验、多世界 worldGroupId 隔离、预算不足时 L3 从最终文本移除。
+- 本步保持 a/b 两步法边界:未迁移任何现有 `ai.start/chat` 调用方。
+
+**验证**:
+- `npm test -- tests/registry/assemble-context.test.ts tests/registry/project-tables.test.ts` 通过(2 files / 13 tests)
+- `npx tsc --noEmit` 通过
+- `npm test` 通过(13 files / 39 tests)
+- `npm run check:required-tables` 通过(45 tables match schema.ts)
+- `npm run build` 通过。Vite 仍输出既有 dynamic-import / chunk-size warning,无构建失败。
+
+**下一步(1.3b)**:把生成入口切到 `assembleContext()`,章节正文优先,再迁移大纲/细纲/世界观/角色/伏笔等入口。

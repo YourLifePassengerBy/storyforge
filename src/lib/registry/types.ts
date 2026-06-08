@@ -5,6 +5,8 @@
  * 设计依据:MASTER-BLUEPRINT.md §5.1(PROJECT_TABLES 强化版)。
  */
 import type { Table } from 'dexie'
+import type { AIProvider } from '../types/ai'
+import type { ContextLayer, ContextSegment } from '../ai/context-budget'
 
 /**
  * 表的归属方式 —— 决定删项目时如何定位该表的记录。
@@ -167,4 +169,50 @@ export interface AdoptResult {
   typeErrors: { field: string; expected: string; got: string }[]
   fkErrors: { field: string; refValue: unknown }[]
   skipped: { reason: string; data: unknown }[]
+}
+
+export type ContextSourceScope = 'project' | 'world' | 'node' | 'chapter' | 'manual'
+
+export interface AssembleContextInput {
+  projectId: number
+  /** Explicit world target. null is a valid explicit single-world/global target. */
+  worldGroupId?: number | null
+  outlineNodeId?: number | null
+  chapterId?: number | null
+  currentChapterOrder?: number
+  sourceKeys?: string[]
+  provider?: AIProvider
+  model?: string
+  /** Test/override hook. When set, this is the real input budget used for trimming. */
+  inputBudgetTokens?: number
+  citedReferenceIds?: number[]
+  masterInsightIds?: number[]
+  previousChapterEnding?: string
+  stateReferenceText?: string
+  extraStateIds?: number[]
+}
+
+export interface ContextSource {
+  key: string
+  label: string
+  scope: ContextSourceScope
+  layer: ContextLayer
+  /** Approximate per-source soft cap. Adapters can still return less. */
+  budgetTokens: number
+  requiresWorldGroupId?: boolean
+  requiresOutlineNodeId?: boolean
+  requiresChapterId?: boolean
+  enabled?: (input: AssembleContextInput) => boolean | Promise<boolean>
+  read: (input: AssembleContextInput) => Promise<string>
+}
+
+export interface AssembleContextResult {
+  text: string
+  segments: ContextSegment[]
+  included: string[]
+  omitted: string[]
+  trimmed: string[]
+  totalInputTokens: number
+  inputBudget: number
+  overBudgetBeforeTrim: boolean
 }

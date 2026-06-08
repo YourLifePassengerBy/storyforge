@@ -19,8 +19,8 @@
 | `FIELD_REGISTRY` | 1.2 | Done | Writable singleton/collection fields, aliases, types, enums, enum aliases, sanitizers, and world-scoped write rules are registered for the 1.2 write layer. |
 | `AdoptionSchema` | 1.2 | Done | Collection writes for characters, foreshadows, outline nodes, chapters, detailed outlines, story arcs, codex categories, and codex entries now declare identity, dedupe policy, FK checks, array member checks, and stamps. |
 | `adopt()` unified write path | 1.2 | Done | AI output and structured adoption paths for 1.2b callers now route through validation, alias mapping, dedupe, FK checks, and typed DB writes. |
-| `CONTEXT_SOURCES` registry | 1.3 | Pending | Register AI context sources, scope, budgets, worldGroupId requirements, enablement rules, and test assertions. |
-| `assembleContext()` unified read path | 1.3 | Pending | Replace scattered hand-built AI context with one budgeted, world-aware, truly trimmed context assembly API. |
+| `CONTEXT_SOURCES` registry | 1.3 | Done | 18 AI context sources now declare scope, layer, budgets, worldGroupId/input requirements, enablement rules, and tests. |
+| `assembleContext()` unified read path | 1.3 | In progress | Pure-add assembly API exists with source requirements, world-aware reads, per-source caps, and true L3->L2->L1 trimming; caller migration remains 1.3b. |
 | Registry validation and lint | 1.1-1.3 / 3.3 | Pending | Validate Dexie tables vs registries, prompt keys, AI meta coverage, transaction scope, manual sync, and source isolation. |
 | Generated AI manual | 3.1 | Pending | Generate AI behavior documentation from prompt modules, context declarations, adoption schemas, and call metadata. |
 
@@ -45,7 +45,7 @@
 | 1.1b lifecycle callers switch + startup validation | Done | `refactor/phase-1-task-1.1b` / `fdd02e5` | `deleteProject` / `deleteGroup` / `migrateToMultiWorld` now use derived lifecycle APIs; `main.tsx` validates registry at startup. |
 | 1.2a FIELD_REGISTRY + AdoptionSchema + adopt() | Done | `refactor/phase-1-task-1.2a` / this task commit | Pure-add unified write layer; no existing caller migration in this task. |
 | 1.2b adopt() caller migration | Done | `refactor/phase-1-task-1.2b` / this task commit | Switched inspiration reverse, world expansion, WorkflowRunner, chunk-writer, saveXxx thin wrappers, and focused AI adoption paths to `adopt()`; added caller regressions. |
-| 1.3a CONTEXT_SOURCES + assembleContext() | Pending | TBD | Pure-add unified read/context layer. |
+| 1.3a CONTEXT_SOURCES + assembleContext() | Done | `refactor/phase-1-task-1.3a` / this task commit | Pure-add unified read/context layer with 18 sources, registry validation, true trimming, and tests. |
 | 1.3b AI generation caller migration | Pending | TBD | Switch generation entrances to `assembleContext()` by priority. |
 
 ## Execution Notes

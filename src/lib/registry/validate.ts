@@ -11,6 +11,7 @@ import { db } from '../db/schema'
 import { PROJECT_TABLES, REGISTRY_BY_NAME } from './project-tables'
 import { FIELD_REGISTRY, FIELD_BY_TARGET } from './field-registry'
 import { ADOPTION_SCHEMAS } from './adoption-schema'
+import { CONTEXT_SOURCES } from './context-sources'
 
 /** 解析 'tableName[field]' → tableName */
 function parseTargetTable(target: string): string | null {
@@ -111,6 +112,24 @@ export function checkRegistry(): RegistryValidationResult {
     for (const arr of schema.arrayMemberChecks ?? []) {
       if (!fields.has(arr.field)) errors.push(`${schema.target}.arrayMemberChecks 字段未在 FIELD_REGISTRY 登记: ${arr.field}`)
       if (!REGISTRY_BY_NAME.has(arr.itemTarget)) errors.push(`${schema.target}.arrayMemberChecks 指向不存在的表: ${arr.itemTarget}`)
+    }
+  }
+
+  const sourceKeys = new Set<string>()
+  for (const source of CONTEXT_SOURCES) {
+    if (sourceKeys.has(source.key)) errors.push(`CONTEXT_SOURCES key 重复登记: ${source.key}`)
+    sourceKeys.add(source.key)
+    if (source.scope === 'world' && !source.requiresWorldGroupId) {
+      errors.push(`CONTEXT_SOURCES world source 必须显式要求 worldGroupId: ${source.key}`)
+    }
+    if (source.scope === 'node' && !source.requiresOutlineNodeId) {
+      errors.push(`CONTEXT_SOURCES node source 必须显式要求 outlineNodeId/chapterId: ${source.key}`)
+    }
+    if (source.scope === 'chapter' && !source.requiresChapterId && source.key !== 'foreshadows') {
+      errors.push(`CONTEXT_SOURCES chapter source 必须显式要求 chapterId: ${source.key}`)
+    }
+    if (source.budgetTokens <= 0) {
+      errors.push(`CONTEXT_SOURCES budgetTokens 必须为正数: ${source.key}`)
     }
   }
 
