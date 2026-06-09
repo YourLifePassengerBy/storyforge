@@ -306,6 +306,29 @@
 - 设置区"AI 模型配置"加一个"上下文窗口(高级,可选)"输入框,提示"本地/自定义模型请按实际填写,如 131072";
 - **完成判据**:本地模型填 170000 后,预算面板按 170K 计算,不再误报超窗。
 
+## 🟠 FB-9（功能缺口 · 旧路径症状）— 场景细纲(detailed outline)不被正文生成吃进去
+
+> 反馈人：zzjj。诉求:"让 AI 在生成正文的时候去吃这部分细纲的信息挺重要,这样用精度高的模型、较小上下文就能生成好文字"。
+> 文件:`src/lib/ai/adapters/chapter-adapter.ts`(`buildChapterContentPrompt`)、`src/components/editor/ChapterEditor.tsx`、`src/lib/ai/memory-builder.ts`
+
+**已确认现状**(读代码核对):正文生成走旧的 `buildChapterContentPrompt(chapterTitle, chapterSummary, worldContext, characterContext, previousChapterEnding, ...)`——**参数列表里根本没有细纲**;`memory-builder` 工作记忆层也只含"当前章节大纲 + 近3章摘要 + 情感节拍",无细纲字段;`ChapterEditor` 调用时只传了 `outlineNode.summary`(大纲摘要),没传场景细纲。**所以细纲只用于展示/批量流程中间步,从未进正文生成的 prompt。**
+
+**根因**:这正是「旧代码残留」的症状——正文生成至今没切到新的 `assembleContext`,走的是旧 `chapter-adapter`,该旧路径当初就没设计吃细纲。
+
+**改法(与旧代码清除联动)**:
+- 把 `detailedOutlines`(场景细纲)登记/确认为一个 `CONTEXT_SOURCE`(若未登记则加一行),正文生成 `assembleContext({ need:[...,'detailedOutline'] })` 自动带上。
+- 把 `ChapterEditor` 的正文生成从旧 `buildFullWorldCtx + buildChapterContentPrompt` 切到 `assembleContext`(属「旧代码清除」专项的一环)。
+- **完成判据**:有细纲的章节,正文生成的请求体里能看到细纲场景信息(可用网络抓包验证,同 FB-1 手法)。
+
+## 🔴 FB-10（数据 bug · 疑似未走 adopt）— 生成卷级大纲，点采纳后未写入
+
+> 反馈人：买辣椒也用券。"生成卷级大纲,点击采纳写入后,并未写入"。
+> 文件:疑似卷级大纲生成面板的采纳写回路径(`outline.volume` 相关 / `OutlinePanel` / 工作流 saveTarget `create-outline-nodes`)
+
+**待查根因**:采纳后未落库,可能是①该采纳路径没走 `adopt({ target:'outlineNodes' })`(旧手写写回失败静默)②AI 输出非预期 JSON 结构导致解析失败但无提示③卷/章层级 parentId 错误被去重误杀(与 FB-6 同源)。
+
+**改法**:定位该采纳入口 → 确认是否走 `adopt()` → 若是旧手写路径则切到 `adopt()` 并加失败提示;补反例测试(喂卷级大纲 AI 输出 → 断言 outlineNodes 实际写入)。**先复现/定位再改。** 与 FB-6(导入大纲丢失)、旧代码清除联动排查。
+
 ---
 
 # ═══ 项目健康度与完善性专项（HEALTH-1~6 · 2026-06-09 立项）═══
