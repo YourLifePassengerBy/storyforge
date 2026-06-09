@@ -8,7 +8,7 @@
 | 3.1 AI 说明书自动生成器 | ✅ Done | 代码扫描生成 generated.md + CI 校验 + 防 key 漂移 |
 | 3.2 测试覆盖率体系 | ✅ Done | 聚焦核心逻辑层门槛(防退化基线) + 16 parser 测试 + registry≥75%;76 测试全绿 |
 | 3.3 CI lint + GitHub Actions | ✅ Done | 架构铁律 lint(抓到并修 1 处真违规)+ 4 守护链 + .github/workflows/ci.yml |
-| 3.4 安全加固(HTML/EPUB sanitize / PAT 不持久化) | Pending | 部分已在 Phase 2.8 做 |
+| 3.4 安全加固 | ✅ Done | GitHub PAT 默认 session-only + 可选记住;SVG/HTML/EPUB sanitize 已就位(复核确认) |
 | 3.5 性能(主包 < 1MB / React.lazy 懒加载) | Pending | |
 | 3.6 文档体系(README 中英 / CONTRIBUTING) | Pending | |
 | 3.7 国际化预留(i18n 框架) | Pending | |
@@ -62,3 +62,19 @@
 **验证**:check:architecture 0 违规 / 76 测试全绿 / tsc=0 / build OK
 
 **下一步(3.4)**:安全加固(HTML/EPUB sanitize 复核 / GitHub PAT 不持久化 / SVG 已 sanitize)。
+
+## 3.4 · 安全加固（2026-06-09 by Claude）
+
+安全审计结果(逐项):
+- **SVG 导出 sanitize**:✅ 已有(`sanitize-svg.ts`,Phase 0 时做,防 AI 输出 SVG 的 XSS)
+- **HTML 导出 sanitize**:✅ 已有(`html-builder.ts` → `sanitizeExportHtml`,Phase 2.8 做)
+- **EPUB 导出 sanitize**:✅ 已有(`epub-export.ts` → `sanitizeExportHtml`,Phase 2.8 做)
+- **GitHub PAT 持久化**:🔧 本次修复(P2-2)
+  - 旧:默认存 localStorage,任何 XSS/本地脚本可读 token
+  - 新:默认只存 sessionStorage(关标签即清);用户显式勾选"在本机记住"才落 localStorage
+  - UI 加勾选框 + 安全说明文案
+- **其它 localStorage 敏感数据扫描**:无 apiKey/password 明文持久化(AI provider 配置另在 ai-config,属用户自管)
+
+**验证**:tsc=0 / 76 测试全绿 / check:architecture 0 违规 / build OK
+
+**下一步(3.5)**:性能(主包 < 1MB / React.lazy 懒加载重面板)。
