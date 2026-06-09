@@ -10,7 +10,7 @@
 | 3.3 CI lint + GitHub Actions | ✅ Done | 架构铁律 lint(抓到并修 1 处真违规)+ 4 守护链 + .github/workflows/ci.yml |
 | 3.4 安全加固 | ✅ Done | GitHub PAT 默认 session-only + 可选记住;SVG/HTML/EPUB sanitize 已就位(复核确认) |
 | 3.5 性能 | ✅ Done | 地图面板 React.lazy + vendor 拆分(editor/db/d3/react);主包 1948→1422KB(gzip 587→415) |
-| 3.6 文档体系(README 中英 / CONTRIBUTING) | Pending | |
+| 3.6 文档体系 | ✅ Done | CONTRIBUTING(含铁律)+ README 英文 TL;DR + Issue/PR 模板 |
 | 3.7 国际化预留(i18n 框架) | Pending | |
 
 ---
@@ -93,3 +93,15 @@
 **验证**:tsc=0 / 76 测试全绿 / check:architecture 0 违规 / build OK(主包降 30%)
 
 **下一步(3.6)**:README 中英双语 + CONTRIBUTING。
+
+## 3.6 · 文档体系（2026-06-09 by Claude）
+
+- **CONTRIBUTING.md**:贡献指南。核心是引导贡献者先读 CLAUDE.md 三注册表铁律 + npm run ci 本地校验 + 加新功能标准流程(改哪个注册表)+ 生产项目数据安全提醒。
+- **README 英文 TL;DR**:在 badges 后加英文简介块(隐私优先/纯前端/自带 AI key/无黑箱/三注册表架构 + quick start),面向国际/开源大赛评审。
+- **Issue 模板**:bug_report.md(含 IndexedDB 截图 + 备份提示)+ feature_request.md(中英双语)。
+- **PR 模板**:pull_request_template.md(含三注册表铁律自检清单 + npm run ci 勾选)。
+- 现有 README 已有 609 行丰富中文内容(架构/功能全景/提示词系统/工作流),本次只补国际化与协作缺口,不重写。
+
+**验证**:check:architecture 0 违规 / 76 测试全绿(纯文档改动,逻辑未变)
+
+**下一步(3.7)**:i18n 框架预留。
