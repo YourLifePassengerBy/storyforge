@@ -7,6 +7,7 @@ import { useAIStream } from '../../hooks/useAIStream'
 import { buildConceptMapPrompt, buildImageMapPrompt } from '../../lib/ai/adapters/geography-adapter'
 import type { Project, Location, LocationType } from '../../lib/types'
 import { nanoid } from '../../lib/utils/id'
+import { sanitizeSvg } from '../../lib/utils/sanitize-svg'
 import LocationTreeMap from './LocationTreeMap'
 
 const LOCATION_TYPES: { value: LocationType; label: string }[] = [
@@ -21,6 +22,18 @@ const LOCATION_TYPES: { value: LocationType; label: string }[] = [
   { value: 'building', label: '建筑' },
   { value: 'other', label: '其他' },
 ]
+
+export function removeLocationSubtree(locations: Location[], id: string): Location[] {
+  const toDelete = new Set<string>()
+  const collect = (parentId: string) => {
+    toDelete.add(parentId)
+    for (const loc of locations) {
+      if (loc.parentId === parentId) collect(loc.id)
+    }
+  }
+  collect(id)
+  return locations.filter(l => !toDelete.has(l.id))
+}
 
 interface Props {
   project: Project
@@ -86,8 +99,7 @@ export default function GeographyPanel({ project }: Props) {
   }
 
   const handleDeleteLocation = (id: string) => {
-    const updated = locations.filter(l => l.id !== id && l.parentId !== id)
-    saveLocations(updated)
+    saveLocations(removeLocationSubtree(locations, id))
   }
 
   // AI 概念地图
@@ -101,7 +113,8 @@ export default function GeographyPanel({ project }: Props) {
       .replace(/^```(?:svg|xml)?\n?/i, '')
       .replace(/\n?```$/i, '')
       .trim()
-    setSvgContent(svg)
+    // 安全清洗：AI 输出的 SVG 直接 dangerouslySetInnerHTML 渲染，须剔除脚本/事件防 XSS
+    setSvgContent(sanitizeSvg(svg))
   }
 
   // AI 图像 prompt

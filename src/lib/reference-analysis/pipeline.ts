@@ -200,7 +200,7 @@ export async function runRefAnalysis(refId: number): Promise<void> {
     // 收尾
     const finalAnalyses = await db.referenceChunkAnalysis
       .where('referenceId').equals(refId).toArray()
-    const successRatio = finalAnalyses.length / total
+    const successRatio = total > 0 ? finalAnalyses.length / total : 0
     const finalStatus = successRatio > 0 ? 'done' : 'failed'
     const errMsg = successRatio < 1
       ? `共 ${total} 块，成功 ${finalAnalyses.length}，失败 ${total - finalAnalyses.length}`
@@ -364,17 +364,7 @@ async function chatWithAbort(
   if (signal?.aborted) {
     const e = new Error('aborted'); e.name = 'AbortError'; throw e
   }
-  return await Promise.race([
-    chat(messages, config),
-    new Promise<string>((_, reject) => {
-      if (!signal) return
-      const onAbort = () => {
-        const e = new Error('aborted'); e.name = 'AbortError'; reject(e)
-      }
-      if (signal.aborted) onAbort()
-      else signal.addEventListener('abort', onAbort, { once: true })
-    }),
-  ])
+  return await chat(messages, config, undefined, signal)
 }
 
 function buildRollingContext(prev: string, row: ReferenceChunkAnalysis): string {

@@ -8,7 +8,7 @@
  * - 预算计算与自动裁剪
  */
 
-import type { AIProvider } from '../types'
+import type { AIProvider, ChatMessage } from '../types'
 
 // ── 模型上下文窗口预设 ──────────────────────────────
 
@@ -160,20 +160,29 @@ export interface ContextBudget {
   safetyMargin: number
 }
 
-/** 计算上下文预算 */
+/** 计算上下文预算
+ * @param contextWindowOverride FB-8:用户为本地/自定义模型手填的上下文窗口(token)。
+ *   优先级:用户显式设置(>0) > 内置预设 > 8K 兜底。修复"本地256K模型被当8K、误报超窗"。
+ */
 export function calculateBudget(
   provider: AIProvider,
   model: string,
   segments: ContextSegment[],
+  contextWindowOverride?: number,
 ): ContextBudget {
   const preset = getModelPreset(provider, model)
-  const safetyMargin = Math.round(preset.maxContext * 0.05) // 5% 安全边际
-  const inputBudget = preset.maxContext - preset.maxOutput - safetyMargin
+  const maxContext = (contextWindowOverride && contextWindowOverride > 0)
+    ? contextWindowOverride
+    : preset.maxContext
+  // 输出预留不超过窗口一半(用户填的窗口若较小时收敛,避免 inputBudget 变负)
+  const maxOutput = Math.min(preset.maxOutput, Math.floor(maxContext * 0.5))
+  const safetyMargin = Math.round(maxContext * 0.05) // 5% 安全边际
+  const inputBudget = maxContext - maxOutput - safetyMargin
   const totalInputTokens = segments.reduce((sum, s) => sum + s.tokens, 0)
 
   return {
-    maxContext: preset.maxContext,
-    maxOutput: preset.maxOutput,
+    maxContext,
+    maxOutput,
     inputBudget,
     segments,
     totalInputTokens,
@@ -211,6 +220,60 @@ export function autoTrimToFit(
   }
 
   return { segments: remaining, trimmedLayers }
+}
+
+export interface TrimmedMessagesResult {
+  messages: ChatMessage[]
+  trimmed: boolean
+  totalInputTokens: number
+  inputBudget: number
+}
+
+/** True request-side trimming used before fetch, not only for the UI budget preview. */
+export function trimMessagesToFit(
+  messages: ChatMessage[],
+  provider: AIProvider,
+  model: string,
+  maxOutput?: number,
+): TrimmedMessagesResult {
+  const preset = getModelPreset(provider, model)
+  const safetyMargin = Math.round(preset.maxContext * 0.05)
+  const inputBudget = preset.maxContext - (maxOutput && maxOutput > 0 ? maxOutput : preset.maxOutput) - safetyMargin
+  const copy = messages.map(message => ({ ...message }))
+  let total = copy.reduce((sum, message) => sum + estimateTokens(message.content), 0)
+  let trimmed = false
+
+  let guard = 0
+  while (total > inputBudget && guard++ < copy.length * 3) {
+    const index = copy.findIndex(message =>
+      message.role !== 'system' && message.content !== '（此段因上下文窗口限制已裁剪）')
+    if (index < 0) break
+    const tokens = estimateTokens(copy[index].content)
+    const overflow = total - inputBudget
+    if (tokens <= overflow + 128) {
+      copy[index].content = '（此段因上下文窗口限制已裁剪）'
+    } else {
+      const keepTokens = Math.max(64, tokens - overflow - 128)
+      copy[index].content = trimTextToApproxTokens(copy[index].content, keepTokens)
+    }
+    total = copy.reduce((sum, message) => sum + estimateTokens(message.content), 0)
+    trimmed = true
+  }
+
+  return { messages: copy, trimmed, totalInputTokens: total, inputBudget }
+}
+
+function trimTextToApproxTokens(text: string, keepTokens: number): string {
+  if (estimateTokens(text) <= keepTokens) return text
+  let lo = 0
+  let hi = text.length
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2)
+    const candidate = text.slice(text.length - mid)
+    if (estimateTokens(candidate) <= keepTokens) lo = mid
+    else hi = mid - 1
+  }
+  return `（前文因上下文窗口限制已裁剪）\n${text.slice(text.length - lo)}`
 }
 
 /** 格式化 token 数为人类可读 */

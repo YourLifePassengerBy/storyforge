@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Play, Square, Sparkles, Check, X, Loader2, ChevronRight, Save, ClipboardCopy,
 } from 'lucide-react'
@@ -8,13 +8,17 @@ import { useCreativeRulesStore } from '../../../stores/project-singletons'
 import { useCharacterStore } from '../../../stores/character'
 import { useOutlineStore } from '../../../stores/outline'
 import { useForeshadowStore } from '../../../stores/foreshadow'
+import { useWorldGroupStore } from '../../../stores/world-group'
 import { useAIStream } from '../../../hooks/useAIStream'
 import { renderPrompt } from '../../../lib/ai/prompt-engine'
 import { extractJSON } from '../../../lib/ai/adapters/import-adapter'
+import { adopt } from '../../../lib/registry/adopt'
+import { assembleContext } from '../../../lib/registry/assemble-context'
+import { db } from '../../../lib/db/schema'
 import type { PromptWorkflow, PromptWorkflowStep, SaveTarget } from '../../../lib/types/workflow'
-import type { Project, CharacterRole } from '../../../lib/types'
+import type { Project } from '../../../lib/types'
 import type { TokenUsage } from '../../../lib/ai/logger'
-import { targetLabel } from './workflow-helpers'
+import { targetLabel, assembleWorkflowStepVars } from './workflow-helpers'
 
 interface RunnerProps {
   workflow: PromptWorkflow
@@ -30,6 +34,19 @@ interface StepResult {
   tokenUsage?: TokenUsage | null
 }
 
+async function findExistingOutlineNode(
+  projectId: number,
+  node: { parentId: number | null; type: string; title: string },
+): Promise<number | null> {
+  const rows = await db.outlineNodes.where('projectId').equals(projectId).toArray()
+  const hit = rows.find(n =>
+    (n.parentId ?? null) === (node.parentId ?? null) &&
+    n.type === node.type &&
+    n.title === node.title
+  )
+  return hit?.id ?? null
+}
+
 /**
  * 工作流执行器：按顺序运行一个 PromptWorkflow 的所有步骤，
  * 每步可暂停让用户审核、重试、跳过、或自动写入 SaveTarget。
@@ -37,12 +54,28 @@ interface StepResult {
  */
 export default function WorkflowRunner({ workflow, project, onClose }: RunnerProps) {
   const ai = useAIStream()
-  const { worldview, saveWorldview, storyCore, saveStoryCore, loadAll: loadWorldview } = useWorldviewStore()
-  const { creativeRules, save: saveCreativeRules, loadAll: loadCreativeRules } = useCreativeRulesStore()
-  const { addCharacter, loadAll: loadCharacters } = useCharacterStore()
-  const { addNode, loadAll: loadOutline } = useOutlineStore()
-  const { addForeshadow, loadAll: loadForeshadows } = useForeshadowStore()
+  const { loadAll: loadWorldview } = useWorldviewStore()
+  const { loadAll: loadCreativeRules } = useCreativeRulesStore()
+  const { loadAll: loadCharacters } = useCharacterStore()
+  const { loadAll: loadOutline } = useOutlineStore()
+  const { loadAll: loadForeshadows } = useForeshadowStore()
+  const activeGroupId = useWorldGroupStore(s => s.activeGroupId)
   const [savedSteps, setSavedSteps] = useState<Set<string>>(new Set())
+
+  /**
+   * 步骤输出累加器(FB-1 修复 · 缺陷 A)。
+   * 用 ref 存每一步的输出,而非读 React state `results`——递归推进下一步时
+   * `results` 闭包是上一次渲染的旧值(setResults 异步),会导致 previousOutput 永远取空。
+   * ref.current 始终是最新值,且能跨「暂停/继续/重试」存活。
+   */
+  const stepOutputsRef = useRef<Map<string, string>>(new Map())
+
+  /**
+   * FB-7(BUG-INPUT-WITH-GEN):每个步骤的「用户输入」。
+   * 此前步骤卡完全没有输入框,用户连「一句话故事」都没法自己敲。现在每步可预先输入,
+   * 点生成时并入 ctx(作为 userHint/seed)。用 ref 读取避免闭包陈旧(同 FB-1 教训)。
+   */
+  const userInputsRef = useRef<Map<string, string>>(new Map())
 
   useEffect(() => {
     if (project?.id) {
@@ -60,91 +93,90 @@ export default function WorkflowRunner({ workflow, project, onClose }: RunnerPro
       alert('未关联项目，无法自动保存。请进入某个项目后再运行。')
       return
     }
+    const projectId = project.id
     try {
       if (target.type === 'worldview-field') {
-        const existing = (worldview?.[target.field as keyof typeof worldview] as string) || ''
-        const next = target.mode === 'append' && existing ? `${existing}\n\n${output}` : output
-        await saveWorldview({ projectId: project.id, [target.field]: next })
+        await adopt({
+          projectId,
+          target: 'worldviews',
+          mode: target.mode === 'append' ? 'append' : 'replace',
+          data: { [target.field]: output },
+        })
+        await loadWorldview(projectId)
       } else if (target.type === 'storyCore-field') {
-        const existing = (storyCore?.[target.field as keyof typeof storyCore] as string) || ''
-        const next = target.mode === 'append' && existing ? `${existing}\n\n${output}` : output
-        await saveStoryCore({ projectId: project.id, [target.field]: next })
+        await adopt({
+          projectId,
+          target: 'storyCores',
+          mode: target.mode === 'append' ? 'append' : 'replace',
+          data: { [target.field]: output },
+        })
+        await loadWorldview(projectId)
       } else if (target.type === 'creativeRules-field') {
-        const existing = (creativeRules?.[target.field as keyof typeof creativeRules] as string) || ''
-        const next = target.mode === 'append' && existing ? `${existing}\n\n${output}` : output
-        await saveCreativeRules({ projectId: project.id, [target.field]: next })
+        await adopt({
+          projectId,
+          target: 'creativeRules',
+          mode: target.mode === 'append' ? 'append' : 'replace',
+          data: { [target.field]: output },
+        })
+        await loadCreativeRules(projectId)
       } else if (target.type === 'create-characters') {
         const parsed = extractJSON(output) as unknown[]
         if (!Array.isArray(parsed)) throw new Error('AI 输出不是 JSON 数组')
-        let n = 0
-        for (const raw of parsed) {
-          if (typeof raw !== 'object' || raw === null) continue
-          const c = raw as Record<string, unknown>
-          if (typeof c.name !== 'string') continue
-          await addCharacter({
-            projectId: project.id,
-            name: c.name,
-            role: ((c.role as string) || 'minor') as CharacterRole,
-            shortDescription: String(c.shortDescription || ''),
-            appearance: String(c.appearance || ''),
-            personality: String(c.personality || ''),
-            background: String(c.background || ''),
-            motivation: String(c.motivation || ''),
-            abilities: String(c.abilities || ''),
-            relationships: String(c.relationships || ''),
-            arc: String(c.arc || ''),
-          })
-          n++
-        }
-        alert(`已写入 ${n} 个角色`)
+        const result = await adopt({ projectId, target: 'characters', mode: 'add-many', data: parsed as Record<string, unknown>[] })
+        await loadCharacters(projectId)
+        alert(`已写入 ${result.written.length} 个角色${result.skipped.length ? `，跳过 ${result.skipped.length} 个` : ''}`)
       } else if (target.type === 'create-outline-nodes') {
         const parsed = extractJSON(output) as unknown[]
         if (!Array.isArray(parsed)) throw new Error('AI 输出不是 JSON 数组')
         let order = 0, n = 0
-        const writeNode = async (raw: Record<string, unknown>, parentId: number | null) => {
-          if (typeof raw.title !== 'string') return
+        const writeNode = async (raw: Record<string, unknown>, parentId: number | null): Promise<number | null> => {
+          if (typeof raw.title !== 'string') return null
           const isVolume = raw.type === 'volume' || (Array.isArray(raw.children) && raw.children.length > 0)
-          const id = await addNode({
-            projectId: project.id!,
+          const normalized = {
+            projectId,
             parentId,
             type: isVolume ? 'volume' : 'chapter',
             title: raw.title,
             summary: String(raw.summary || ''),
             order: order++,
+          }
+          const adopted = await adopt({
+            projectId,
+            target: 'outlineNodes',
+            mode: 'add',
+            data: normalized,
           })
-          n++
-          if (Array.isArray(raw.children)) {
+          const id = adopted.written[0]?.id ?? (await findExistingOutlineNode(projectId, normalized))
+          if (adopted.written.length) n++
+          if (id != null && Array.isArray(raw.children)) {
             for (const child of raw.children) {
               await writeNode(child as Record<string, unknown>, id)
             }
           }
+          return id
         }
         for (const x of parsed) {
           if (typeof x === 'object' && x) await writeNode(x as Record<string, unknown>, null)
         }
+        await loadOutline(projectId)
         alert(`已写入 ${n} 个大纲节点`)
       } else if (target.type === 'create-foreshadows') {
         const parsed = extractJSON(output) as unknown[]
         if (!Array.isArray(parsed)) throw new Error('AI 输出不是 JSON 数组')
-        let n = 0
-        for (const raw of parsed) {
-          if (typeof raw !== 'object' || raw === null) continue
-          const f = raw as Record<string, unknown>
-          if (typeof f.name !== 'string') continue
-          await addForeshadow({
-            projectId: project.id,
-            name: f.name,
-            type: ((f.type as string) || 'chekhov') as 'chekhov',
-            status: 'planned',
-            description: String(f.description || ''),
-            plantChapterId: null,
-            echoChapterIds: '[]',
-            resolveChapterId: null,
-            notes: '',
-          })
-          n++
-        }
-        alert(`已写入 ${n} 个伏笔`)
+        const normalized = parsed
+          .filter((raw): raw is Record<string, unknown> => typeof raw === 'object' && raw !== null)
+          .map(f => ({
+            ...f,
+            status: f.status || 'planned',
+            type: f.type || 'chekhov',
+            echoChapterIds: f.echoChapterIds || [],
+            plantChapterId: f.plantChapterId ?? null,
+            resolveChapterId: f.resolveChapterId ?? null,
+            notes: f.notes || '',
+          }))
+        const result = await adopt({ projectId, target: 'foreshadows', mode: 'add-many', data: normalized })
+        await loadForeshadows(projectId)
+        alert(`已写入 ${result.written.length} 个伏笔${result.skipped.length ? `，跳过 ${result.skipped.length} 个` : ''}`)
       }
       setSavedSteps(prev => new Set(prev).add(stepId))
     } catch (e) {
@@ -169,32 +201,76 @@ export default function WorkflowRunner({ workflow, project, onClose }: RunnerPro
     })
   }
 
+  /**
+   * 为第 idx 步装配上下文(FB-1 修复 · 缺陷 B：走 assembleContext,不再裸 renderPrompt)。
+   * - 项目元信息 projectName/genres + 维度 dimension + userHint(此前全空,AI 失去依据)
+   * - 经注册表 assembleContext 拉取已存项目设定(故事核心/世界观/角色/力量/词条)+ 真实与幻想规则
+   * - 上一步输出经 ref 累加器取得(缺陷 A),与已存设定一起注入「通用前序上下文」槽位 worldContext
+   *   (worldContext 是所有工作流步骤模板都读取的通用槽位,因此 step2 世界起源也能拿到 step1 一句话故事)
+   * - 同时保留步骤声明的 inputMapping(供 chapter.content 的 chapterSummary 等特定变量)
+   */
+  const buildStepContext = async (
+    step: PromptWorkflowStep,
+    idx: number,
+  ): Promise<Record<string, string | number | undefined>> => {
+    // ① 上一步输出(经 ref 累加器 → 修复闭包陈旧 · 缺陷 A)
+    const prevStep = idx > 0 ? workflow.steps[idx - 1] : undefined
+    const prevOut = prevStep ? (stepOutputsRef.current.get(prevStep.stepId) ?? '') : ''
+
+    // ② 走注册表拉取已存项目设定 + 真实与幻想规则(单一事实源,不在此手挑 buildXxxContext · 缺陷 B)
+    let assembledText = ''
+    let worldRulesText = ''
+    if (project?.id) {
+      const wg = project.enableMultiWorld ? activeGroupId : null
+      try {
+        assembledText = (await assembleContext({
+          projectId: project.id,
+          worldGroupId: wg,
+          sourceKeys: ['storyCore', 'worldview', 'powerSystem', 'characters', 'codex'],
+        })).text
+      } catch { /* 上下文装配失败不应阻断生成 */ }
+      try {
+        worldRulesText = (await assembleContext({
+          projectId: project.id,
+          worldGroupId: wg,
+          sourceKeys: ['worldRules'],
+        })).text
+      } catch { /* ignore */ }
+    }
+
+    // ③ 纯逻辑整形(可单测,见 tests/regression/R-WF-*)
+    const ctx = assembleWorkflowStepVars({
+      step,
+      prevOutput: prevOut,
+      projectName: project?.name,
+      genres: project?.genre,
+      assembledContext: assembledText,
+      worldRulesContext: worldRulesText,
+    })
+    // FB-7:把用户为本步输入的内容并入 userHint(在用户已写的基础上生成/扩展)
+    const userInput = userInputsRef.current.get(step.stepId)?.trim()
+    if (userInput) {
+      ctx.userHint = [ctx.userHint, userInput].filter(Boolean).join('\n')
+    }
+    return ctx
+  }
+
   /** 执行第 idx 步 */
   const runStep = async (idx: number) => {
     const step = workflow.steps[idx]
     if (!step) return
     const tpl = usePromptStore.getState().getActive(step.promptModuleKey)
 
-    // 拼上下文：前一步的输出作为 inputMapping
-    const ctx: Record<string, string | number | undefined> = {}
-    const prevStep = workflow.steps[idx - 1]
-    if (prevStep && step.inputMapping) {
-      const prevResult = results.get(prevStep.stepId)
-      if (prevResult?.output) {
-        for (const [from, to] of Object.entries(step.inputMapping)) {
-          if (from === 'previousOutput') ctx[to] = prevResult.output
-        }
-      }
-    }
-    if (step.userHint) ctx.userHint = step.userHint
-
     updateResult(step.stepId, { status: 'running', output: '', error: undefined })
 
     try {
+      const ctx = await buildStepContext(step, idx)
       const { messages } = renderPrompt(tpl, ctx, {
         parameterValues: step.parameterValues,
       })
       const output = await ai.start(messages, undefined, { category: step.promptModuleKey, projectId: project?.id })
+      // FB-1 修复 · 缺陷 A：把本步输出存进 ref(而非只存 React state),供下一步取用
+      stepOutputsRef.current.set(step.stepId, output)
       updateResult(step.stepId, { status: 'done', output, tokenUsage: ai.tokenUsage })
       setCurrentIndex(idx + 1)
 
@@ -217,6 +293,7 @@ export default function WorkflowRunner({ workflow, project, onClose }: RunnerPro
   }
 
   const handleStart = () => {
+    stepOutputsRef.current.clear() // 全新运行:清空上一轮的步骤输出累加器
     setGlobalStatus('running')
     runStep(currentIndex)
   }
@@ -309,6 +386,7 @@ export default function WorkflowRunner({ workflow, project, onClose }: RunnerPro
             onSkip={() => handleSkip(step.stepId)}
             onRetry={() => handleRetryStep(idx)}
             onSave={(output, target) => handleSaveTarget(step.stepId, output, target)}
+            onUserInputChange={(v) => userInputsRef.current.set(step.stepId, v)}
             saved={savedSteps.has(step.stepId)}
             hasProject={!!project?.id}
           />
@@ -330,7 +408,7 @@ export default function WorkflowRunner({ workflow, project, onClose }: RunnerPro
 
 function StepCard({
   step, index, result, isCurrent, onSkip, onRetry,
-  onSave, saved, hasProject,
+  onSave, onUserInputChange, saved, hasProject,
 }: {
   step: PromptWorkflowStep
   index: number
@@ -339,15 +417,22 @@ function StepCard({
   onSkip: () => void
   onRetry: () => void
   onSave: (output: string, target: SaveTarget) => void
+  onUserInputChange: (v: string) => void
   saved: boolean
   hasProject: boolean
 }) {
   const [expanded, setExpanded] = useState(true)
   const [copied, setCopied] = useState(false)
+  // FB-7:用户为本步输入的内容(生成前可填,作为种子并入 prompt)
+  const [userInput, setUserInput] = useState('')
+  // FB-7:AI 输出可编辑(产出后允许用户改了再保存/复制)
+  const [editedOutput, setEditedOutput] = useState('')
+  useEffect(() => { setEditedOutput(result.output || '') }, [result.output])
+  const outText = editedOutput
 
   const handleCopy = () => {
-    if (!result.output) return
-    navigator.clipboard.writeText(result.output).then(() => {
+    if (!outText) return
+    navigator.clipboard.writeText(outText).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     })
@@ -391,6 +476,14 @@ function StepCard({
           {step.userHint && (
             <p className="text-xs text-text-muted">💡 {step.userHint}</p>
           )}
+          {/* FB-7:用户输入框 — 可预先写本步内容(如一句话故事),生成时会带进 prompt */}
+          <textarea
+            value={userInput}
+            onChange={e => { setUserInput(e.target.value); onUserInputChange(e.target.value) }}
+            rows={2}
+            placeholder="你的输入(可选)：在此写本步内容,AI 会在你写的基础上生成/扩展"
+            className="w-full px-2 py-1.5 bg-bg-surface border border-border rounded text-xs text-text-primary resize-y focus:outline-none focus:border-accent"
+          />
           {result.status === 'pending' && (
             <p className="text-xs text-text-muted">待执行</p>
           )}
@@ -404,10 +497,16 @@ function StepCard({
               Token: ↑{result.tokenUsage.inputTokens.toLocaleString()} ↓{result.tokenUsage.outputTokens.toLocaleString()}
             </div>
           )}
-          {result.output && (
-            <pre className="text-xs text-text-primary whitespace-pre-wrap font-sans max-h-64 overflow-y-auto p-2 bg-bg-surface rounded">
-              {result.output}
-            </pre>
+          {result.status === 'done' && (
+            <>
+              <textarea
+                value={editedOutput}
+                onChange={e => setEditedOutput(e.target.value)}
+                rows={8}
+                className="w-full text-xs text-text-primary font-sans max-h-72 p-2 bg-bg-surface border border-border rounded resize-y focus:outline-none focus:border-accent"
+              />
+              <p className="text-[10px] text-text-muted">AI 输出可直接编辑,保存/复制将使用编辑后的内容。</p>
+            </>
           )}
           {result.error && (
             <p className="text-xs text-error">⚠ {result.error}</p>
@@ -434,7 +533,7 @@ function StepCard({
                     <>
                       <span className="text-text-muted">·</span>
                       <button
-                        onClick={() => onSave(result.output, step.saveTarget!)}
+                        onClick={() => onSave(outText, step.saveTarget!)}
                         disabled={saved || !hasProject}
                         title={!hasProject ? '需先进入项目' : `自动写入 ${targetLabel(step.saveTarget)}`}
                         className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded ${

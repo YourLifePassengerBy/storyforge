@@ -7,11 +7,32 @@ import WorldGroupSwitcher from '../world-group/WorldGroupSwitcher'
 import { InlineTextarea } from '../shared/InlineEdit'
 import { useAIStream } from '../../hooks/useAIStream'
 import { buildWorldviewPrompt } from '../../lib/ai/adapters/worldview-adapter'
-import { buildWorldRulesContext } from '../../lib/ai/world-rules-manifest'
+import { assembleContext } from '../../lib/registry/assemble-context'
 import { streamChat } from '../../lib/ai/client'
 import AIStreamOutput from '../shared/AIStreamOutput'
 import PromptRunPanel from '../shared/PromptRunPanel'
+import AIFieldModeTabs from '../shared/AIFieldModeTabs'
 import type { Project, DivineDesign } from '../../lib/types'
+import type { FieldGenerationMode } from '../../lib/ai/field-generation-context'
+
+async function buildRulesSourceContext(projectId: number, worldGroupId: number | null): Promise<string> {
+  return (await assembleContext({ projectId, worldGroupId, sourceKeys: ['worldRules'] })).text
+}
+
+/**
+ * 下游 → 上游「反推」上下文:生成世界观时,结合用户已填的【下游内容】一起反推。
+ * 通过注册表一次性拉取 故事核心 + 角色 + 故事线(均为已登记的 CONTEXT_SOURCE),
+ * 这样"先填角色/故事、再生成世界观"时,AI 能读到它们并反向推导出一致的世界设定。
+ * 注:storyCore 是项目级、characters 是世界级——必须传 worldGroupId 才能召回当前世界的角色。
+ * (替代原先只取 storyCore 的单独调用,合并为一次装配,顺带补齐角色/故事线。)
+ */
+async function buildDownstreamReverseContext(projectId: number, worldGroupId: number | null): Promise<string> {
+  return (await assembleContext({
+    projectId,
+    worldGroupId,
+    sourceKeys: ['storyCore', 'characters', 'storyArcs'],
+  })).text
+}
 
 // ── 常量 ───────────────────────────────────────────────────────
 
@@ -196,7 +217,9 @@ function TextFieldEditor({
   const [parameterValues, setParameterValues] = useState<Record<string, unknown>>({})
   const [systemOverride, setSystemOverride] = useState<string | null>(null)
   const [userOverride, setUserOverride] = useState<string | null>(null)
+  const [mode, setMode] = useState<FieldGenerationMode>('expand')
   const ai = useAIStream()
+  const activeGroupId = useWorldGroupStore(s => s.activeGroupId)
 
   useEffect(() => {
     onStreamingChange(ai.isStreaming)
@@ -204,7 +227,10 @@ function TextFieldEditor({
 
   const handleGenerate = async () => {
     // Phase 32: 注入世界规则
-    const rulesCtx = await buildWorldRulesContext(project.id!)
+    const rulesCtx = await buildRulesSourceContext(project.id!, project.enableMultiWorld ? activeGroupId : null)
+    // 下游 → 上游反推:带上用户已填的故事核心 + 角色 + 故事线,生成世界观时结合反推
+    const downstreamCtx = await buildDownstreamReverseContext(project.id!, project.enableMultiWorld ? activeGroupId : null)
+    const fullContext = [downstreamCtx, contextSummary].filter(Boolean).join('\n\n')
     const opts = {
       parameterValues: {
         ...parameterValues,
@@ -216,7 +242,7 @@ function TextFieldEditor({
       } : undefined,
     }
     const messages = buildWorldviewPrompt(
-      field.label, project.name, project.genre || '', contextSummary, hint, opts,
+      field.label, project.name, project.genre || '', fullContext, hint, opts, value, mode,
     )
     ai.start(messages)
   }
@@ -235,6 +261,7 @@ function TextFieldEditor({
       </div>
 
       <div className="flex items-center gap-2">
+        <AIFieldModeTabs value={mode} onChange={setMode} />
         <input
           value={hint} onChange={e => setHint(e.target.value)}
           placeholder="给 AI 的补充说明（可选）"
@@ -277,14 +304,19 @@ function DivineFieldEditor({
   const [parameterValues, setParameterValues] = useState<Record<string, unknown>>({})
   const [systemOverride, setSystemOverride] = useState<string | null>(null)
   const [userOverride, setUserOverride] = useState<string | null>(null)
+  const [mode, setMode] = useState<FieldGenerationMode>('expand')
   const ai = useAIStream()
+  const activeGroupId = useWorldGroupStore(s => s.activeGroupId)
 
   useEffect(() => {
     onStreamingChange(ai.isStreaming)
   }, [ai.isStreaming, onStreamingChange])
 
   const handleGenerate = async () => {
-    const rulesCtx = await buildWorldRulesContext(project.id!)
+    const rulesCtx = await buildRulesSourceContext(project.id!, project.enableMultiWorld ? activeGroupId : null)
+    // 下游 → 上游反推:带上用户已填的故事核心 + 角色 + 故事线,生成世界观时结合反推
+    const downstreamCtx = await buildDownstreamReverseContext(project.id!, project.enableMultiWorld ? activeGroupId : null)
+    const fullContext = [downstreamCtx, contextSummary].filter(Boolean).join('\n\n')
     const opts = {
       parameterValues: {
         ...parameterValues,
@@ -297,9 +329,15 @@ function DivineFieldEditor({
     }
     const messages = buildWorldviewPrompt(
       '神明与信仰设定',
-      project.name, project.genre || '', contextSummary,
+      project.name, project.genre || '', fullContext,
       hint || '请设计完整的信仰体系，包含：1）主流信仰与层级 2）主要神明/信仰名号与职司 3）规则、风俗与禁忌。分三个小节输出。',
       opts,
+      [
+        divineDesign.divineRank && `信仰层级:${divineDesign.divineRank}`,
+        divineDesign.divineNames && `神明名号:${divineDesign.divineNames}`,
+        divineDesign.divineRules && `信仰规则:${divineDesign.divineRules}`,
+      ].filter(Boolean).join('\n'),
+      mode,
     )
     ai.start(messages)
   }
@@ -411,6 +449,7 @@ function DivineFieldEditor({
 
       {/* AI 生成 */}
       <div className="flex items-center gap-2">
+        <AIFieldModeTabs value={mode} onChange={setMode} />
         <input
           value={hint} onChange={e => setHint(e.target.value)}
           placeholder="给 AI 的补充说明（可选）"
