@@ -41,6 +41,17 @@ const FIELDS: FieldMeta[] = [
   { key: 'items',     field: 'itemDesign',             emoji: '🗡', label: '道具与器物',     description: '武器 / 法器 / 工具 / 科技装备……物品的来源、品级、规则', hint: '这里写物品体系概述；具体道具条目请到本面板「📚 人文主体·人工器物」词条逐条管理，主角随身物品由「🎒 物品栏」自动追踪。' },
 ]
 
+// 每个方面(子页) → 其专属词条分类(builtInKey)。下方只显示该方面对应的词条。
+const HUMANITY_CODEX_KEYS: Record<string, string[] | undefined> = {
+  history: ['humEra'],
+  events: ['humEvent'],
+  races: ['race'],
+  factions: ['faction'],
+  pec: ['humSociety'],
+  conflicts: ['humConflict'],
+  items: ['artifact'],
+}
+
 // ── 主面板 ─────────────────────────────────────────────────────
 
 interface Props { project: Project }
@@ -166,12 +177,12 @@ export default function WorldviewHumanityPanel({ project }: Props) {
                   <CurrencyPanel projectId={project.id!} />
                 </div>
               )}
-              {/* 词条（下）：在全貌之下细化为一个个具体条目(种族/势力/城池/器物…，可打星) */}
-              {f.key === 'races' && (
+              {/* 词条（下）：在全貌之下,把"本方面"细化为一个个具体条目(只显示对应那一类,可打星) */}
+              {HUMANITY_CODEX_KEYS[f.key] && (
                 <div className="mt-6">
-                  <h3 className="text-sm font-semibold text-text-primary mb-1">📚 具体词条 · 细化登记</h3>
-                  <p className="text-xs text-text-muted mb-3">在上面写完整体「全貌」后，这里把人文主体逐条细化：种族 / 势力 / 城池重镇 / 人工器物……可自定义字段、打重要度星级，并进入 AI 生成上下文。</p>
-                  <CodexPanel project={project} fixedDomain="humanity" embedded />
+                  <h3 className="text-sm font-semibold text-text-primary mb-1">📚 {f.label} · 具体词条</h3>
+                  <p className="text-xs text-text-muted mb-3">在上面写完整体「全貌」后，这里把「{f.label}」逐条细化登记，可自定义字段、打重要度星级，并进入 AI 生成上下文。</p>
+                  <CodexPanel project={project} fixedCategoryKeys={HUMANITY_CODEX_KEYS[f.key]} embedded />
                 </div>
               )}
             </div>

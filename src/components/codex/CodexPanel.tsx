@@ -21,19 +21,29 @@ interface Props {
   project: Project
   /** B3:嵌入自然/人文面板时锁定领域并隐藏顶部切换标签(独立面板不传=完整两栏切换) */
   fixedDomain?: CodexDomain
+  /**
+   * 锁定到指定内置分类(builtInKey 列表)——用于"世界观每个方面下面只显示对应那一类词条"。
+   * 传 1 个 key:单分类模式(隐藏左侧分类树,只剩该类的词条)。
+   * 传多个 key(如自然资源 mineral/herb/beast):只显示这几类,可在它们间切换。
+   */
+  fixedCategoryKeys?: string[]
   /** 嵌入模式:去掉外层标题/高度占满,适配面板内嵌 */
   embedded?: boolean
 }
 
 const DOMAINS: CodexDomain[] = ['natural', 'humanity']
 
-export default function CodexPanel({ project, fixedDomain, embedded }: Props) {
+export default function CodexPanel({ project, fixedDomain, fixedCategoryKeys, embedded }: Props) {
   const projectId = project.id!
   const {
     categories, entries, loadAll,
     addCategory, deleteCategory, setCategoryHidden, updateCategory,
     addEntry, updateEntry, deleteEntry,
   } = useCodexStore()
+
+  // 锁定单一分类:隐藏分类树,只展示该类词条
+  const lockedKeys = fixedCategoryKeys
+  const lockedSingle = (lockedKeys?.length ?? 0) === 1
 
   const [domainState, setDomain] = useState<CodexDomain>(fixedDomain ?? 'natural')
   const domain = fixedDomain ?? domainState
@@ -45,10 +55,17 @@ export default function CodexPanel({ project, fixedDomain, embedded }: Props) {
 
   useEffect(() => { loadAll(projectId) }, [projectId, loadAll])
 
-  // 当前领域的分类（按 order）
+  // 当前领域的分类（按 order）。若锁定了 builtInKey 列表,则只取那几类(跨域亦可)。
   const domainCats = useMemo(
-    () => categories.filter(c => c.domain === domain).sort((a, b) => a.order - b.order),
-    [categories, domain],
+    () => {
+      if (lockedKeys && lockedKeys.length) {
+        return categories
+          .filter(c => c.builtInKey && lockedKeys.includes(c.builtInKey))
+          .sort((a, b) => lockedKeys.indexOf(a.builtInKey!) - lockedKeys.indexOf(b.builtInKey!))
+      }
+      return categories.filter(c => c.domain === domain).sort((a, b) => a.order - b.order)
+    },
+    [categories, domain, lockedKeys],
   )
   const visibleCats = useMemo(
     () => domainCats.filter(c => showHidden || !c.hidden),
@@ -107,8 +124,11 @@ export default function CodexPanel({ project, fixedDomain, embedded }: Props) {
   }
 
   return (
-    <div className={embedded ? 'flex flex-col h-[30rem] border border-border rounded-xl overflow-hidden' : 'h-full flex flex-col'}>
-      {/* 顶部：领域切换(嵌入且锁定领域时隐藏) */}
+    <div className={embedded
+      ? `flex flex-col ${lockedSingle ? 'h-80' : 'h-[30rem]'} border border-border rounded-xl overflow-hidden`
+      : 'h-full flex flex-col'}>
+      {/* 顶部：领域切换(嵌入且锁定领域时隐藏;单分类锁定时整条隐藏) */}
+      {!lockedSingle && (
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
         {!fixedDomain && (
           <>
@@ -139,9 +159,11 @@ export default function CodexPanel({ project, fixedDomain, embedded }: Props) {
           {showHidden ? '隐藏项已显示' : '显示隐藏项'}
         </button>
       </div>
+      )}
 
       <div className="flex-1 flex min-h-0">
-        {/* 左：分类列表 */}
+        {/* 左：分类列表(单分类锁定时隐藏) */}
+        {!lockedSingle && (
         <div className="w-44 shrink-0 border-r border-border flex flex-col">
           <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
             {visibleCats.map(cat => (
@@ -177,13 +199,16 @@ export default function CodexPanel({ project, fixedDomain, embedded }: Props) {
               </div>
             ))}
           </div>
-          <button
-            onClick={handleAddCategory}
-            className="m-2 px-2 py-1.5 text-xs rounded-lg border border-dashed border-border text-text-muted hover:text-accent hover:border-accent/50 inline-flex items-center justify-center gap-1"
-          >
-            <FolderPlus className="w-3.5 h-3.5" /> 新增分类
-          </button>
+          {!lockedKeys && (
+            <button
+              onClick={handleAddCategory}
+              className="m-2 px-2 py-1.5 text-xs rounded-lg border border-dashed border-border text-text-muted hover:text-accent hover:border-accent/50 inline-flex items-center justify-center gap-1"
+            >
+              <FolderPlus className="w-3.5 h-3.5" /> 新增分类
+            </button>
+          )}
         </div>
+        )}
 
         {/* 中：词条列表 */}
         <div className="w-52 shrink-0 border-r border-border flex flex-col">
