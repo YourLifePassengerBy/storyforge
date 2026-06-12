@@ -8,13 +8,13 @@ import { useChapterStore } from '../stores/chapter'
 import { useForeshadowStore } from '../stores/foreshadow'
 import { useGeographyStore } from '../stores/project-singletons'
 import { useHistoryStore } from '../stores/project-singletons'
-import { useItemSystemStore } from '../stores/project-singletons'
 import { useCreativeRulesStore } from '../stores/project-singletons'
 import { useCharacterRelationStore } from '../stores/character-relation'
 import { useReferenceStore } from '../stores/reference'
 import { useEmotionBeatStore } from '../stores/emotion-beat'
 import { useWorldRulesStore } from '../stores/world-rules'
 import { useAutoBackup } from '../hooks/useAutoBackup'
+import { useGistAutoBackup } from '../hooks/useGistAutoBackup'
 import { PanelRight } from 'lucide-react'
 import Sidebar, { type SidebarModule } from '../components/layout/Sidebar'
 import PropertiesPanel from '../components/layout/PropertiesPanel'
@@ -25,7 +25,7 @@ import UsageStatsPage from '../components/settings/UsageStatsPage'
 import VersionHistoryPanel from '../components/system/VersionHistoryPanel'
 import ImportDocPanel from '../components/system/ImportDocPanel'
 import PromptManagerPanel from '../components/settings/prompt/PromptManagerPanel'
-// MasterStudiesPanel 已整合进 ReferencePanel（Phase 20）
+// 旧「作品学习」面板已整合进 ReferencePanel（Phase 20，子系统于 v32 下线）
 import DataManagementPanel from '../components/data/DataManagementPanel'
 import WorldRulesPanel from '../components/worldview/WorldRulesPanel'
 import StoryCorePanel from '../components/worldview/StoryCorePanel'
@@ -37,16 +37,14 @@ import CharacterPanel from '../components/character/CharacterPanel'
 import CharacterMinorPanel from '../components/character/CharacterMinorPanel'
 import CharacterNPCPanel from '../components/character/CharacterNPCPanel'
 import CharacterExtraPanel from '../components/character/CharacterExtraPanel'
-import FactionPanel from '../components/faction/FactionPanel'
 import OutlinePanel from '../components/outline/OutlinePanel'
 import DetailedOutlinePanel from '../components/outline/DetailedOutlinePanel'
 import ChaptersListPanel from '../components/editor/ChaptersListPanel'
 import ForeshadowPanel from '../components/foreshadow/ForeshadowPanel'
+import StyleLearningPanel from '../components/style/StyleLearningPanel'
 // Phase 3.5 性能:地图类面板拉 three.js / d3 / azgaar(重),懒加载踢出首屏主包
 const GeographyPanel = lazy(() => import('../components/geography/GeographyPanel'))
 import HistoryPanel from '../components/history/HistoryPanel'
-import ItemSystemPanel from '../components/items/ItemSystemPanel'
-import CodexPanel from '../components/codex/CodexPanel'
 import CreativeRulesPanel from '../components/rules/CreativeRulesPanel'
 import CharacterRelationPanel from '../components/relations/CharacterRelationPanel'
 const WorldMapPanel = lazy(() => import('../components/geography/WorldMapPanel'))
@@ -86,8 +84,10 @@ export default function WorkspacePage() {
     return hidden
   }, [project?.enableMultiWorld])
 
-  // 自动定时备份（每 5 分钟）
+  // 自动定时备份（每 5 分钟本地快照）
   useAutoBackup(project?.id ?? null)
+  // 云自动备份（开关开启时每 10 分钟推 GitHub Gist）
+  useGistAutoBackup(project?.id ?? null)
 
   // 加载项目 + 所有关联数据
   useEffect(() => {
@@ -97,33 +97,48 @@ export default function WorkspacePage() {
         return
       }
       setLoading(true)
-      const p = await loadProject(Number(projectId))
+      let p
+      try {
+        p = await loadProject(Number(projectId))
+      } catch (err) {
+        console.error('[Workspace] loadProject 抛错:', err)
+        setLoading(false)
+        return
+      }
       if (!p) {
         navigate('/')
         return
       }
 
-      // 并行加载所有数据
+      // 修复:直链/刷新进入工作区时 projects 列表可能为空(没经首页加载过),
+      // 导致 `project = projects.find(...)` 恒为 null、永久卡"加载中"。这里补加载项目列表。
+      if (useProjectStore.getState().projects.length === 0) {
+        await useProjectStore.getState().loadProjects().catch(() => {})
+      }
+
+      // 并行加载所有数据。用 allSettled:任一 store 加载失败也不连累整体、
+      // 不会让 setLoading(false) 漏执行而永久卡"加载中"(健壮性,防单点 store 抛错锁死工作区)。
       const pid = p.id!
-      await Promise.all([
-        useWorldviewStore.getState().loadAll(pid),
-        useCharacterStore.getState().loadAll(pid),
-        useOutlineStore.getState().loadAll(pid),
-        useChapterStore.getState().loadAll(pid),
-        useForeshadowStore.getState().loadAll(pid),
-        useGeographyStore.getState().loadAll(pid),
-        useHistoryStore.getState().loadAll(pid),
-        useItemSystemStore.getState().loadAll(pid),
-        useCreativeRulesStore.getState().loadAll(pid),
-        useCharacterRelationStore.getState().loadAll(pid),
-        useReferenceStore.getState().loadAll(pid),
-        useEmotionBeatStore.getState().loadAll(pid),
-        useLocationStore.getState().loadAll(pid),
-        // Phase 32: 加载世界规则（首次访问自动创建空 profile，兼容旧项目）
-        useWorldRulesStore.getState().loadProfile(pid),
-        // Phase 25.4: 多世界系统（始终加载，开关由 UI 层控制显隐）
-        useWorldGroupStore.getState().loadAll(pid),
-      ])
+      const loaders: { name: string; run: () => Promise<unknown> }[] = [
+        { name: 'worldview', run: () => useWorldviewStore.getState().loadAll(pid) },
+        { name: 'character', run: () => useCharacterStore.getState().loadAll(pid) },
+        { name: 'outline', run: () => useOutlineStore.getState().loadAll(pid) },
+        { name: 'chapter', run: () => useChapterStore.getState().loadAll(pid) },
+        { name: 'foreshadow', run: () => useForeshadowStore.getState().loadAll(pid) },
+        { name: 'geography', run: () => useGeographyStore.getState().loadAll(pid) },
+        { name: 'history', run: () => useHistoryStore.getState().loadAll(pid) },
+        { name: 'creativeRules', run: () => useCreativeRulesStore.getState().loadAll(pid) },
+        { name: 'characterRelation', run: () => useCharacterRelationStore.getState().loadAll(pid) },
+        { name: 'reference', run: () => useReferenceStore.getState().loadAll(pid) },
+        { name: 'emotionBeat', run: () => useEmotionBeatStore.getState().loadAll(pid) },
+        { name: 'location', run: () => useLocationStore.getState().loadAll(pid) },
+        { name: 'worldRules', run: () => useWorldRulesStore.getState().loadProfile(pid) },
+        { name: 'worldGroup', run: () => useWorldGroupStore.getState().loadAll(pid) },
+      ]
+      const results = await Promise.allSettled(loaders.map(l => l.run()))
+      results.forEach((r, i) => {
+        if (r.status === 'rejected') console.error(`[Workspace] ${loaders[i].name} 加载失败:`, r.reason)
+      })
 
       setLoading(false)
     }
@@ -172,10 +187,6 @@ export default function WorkspacePage() {
         return <WorldMapPanel project={project} />
       case 'history':
         return <HistoryPanel project={project} />
-      case 'items':
-        return <ItemSystemPanel project={project} />
-      case 'codex':
-        return <CodexPanel project={project} />
       case 'power-system':
         return <PowerSystemPanel project={project} />
 
@@ -195,8 +206,6 @@ export default function WorkspacePage() {
         return <CharacterExtraPanel project={project} />
       case 'relations':
         return <CharacterRelationPanel project={project} />
-      case 'factions':
-        return <FactionPanel project={project} />
 
       // ── 创作区 ─────────────────────────────────────────────────────
       case 'rules':
@@ -213,6 +222,8 @@ export default function WorkspacePage() {
         return <ChaptersListPanel project={project} initialNodeId={editorNodeId} />
       case 'foreshadow':
         return <ForeshadowPanel project={project} />
+      case 'style-learning':
+        return <StyleLearningPanel project={project} />
       case 'locations':
         return <LocationPanel project={project} />
       case 'story-arc':
@@ -238,7 +249,7 @@ export default function WorkspacePage() {
       case 'version-history':
         return <VersionHistoryPanel project={project} />
       case 'import-doc':
-        return <ImportDocPanel project={project} />
+        return <ImportDocPanel project={project} onNavigate={(m) => { setActiveModule(m); setEditorNodeId(null) }} />
       case 'settings':
         return <SettingsPage />
       case 'usage-stats':

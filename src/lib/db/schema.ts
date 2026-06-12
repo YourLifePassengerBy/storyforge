@@ -1,17 +1,16 @@
 import Dexie, { type Table } from 'dexie'
+import { migrateLegacyTablesToCodex } from '../migrations/legacy-to-codex-upgrade'
 import type {
   Project,
   Worldview,
   StoryCore,
   PowerSystem,
   Character,
-  Faction,
   OutlineNode,
   Chapter,
   Foreshadow,
   Geography,
   History,
-  ItemSystem,
   CreativeRules,
   CharacterRelation,
   Snapshot,
@@ -24,12 +23,7 @@ import type {
   ImportLog,
   ImportFileBlob,
   PromptWorkflow,
-  MasterWork,
-  MasterChunkAnalysis,
-  MasterChapterBeat,
-  MasterStyleMetrics,
   Note,
-  MasterInsight,
   StateCard,
   EmotionBeatCard,
   WorldNode,
@@ -38,6 +32,7 @@ import type {
   HistoricalKeyword,
   ImportantLocation,
   WorldRulesProfile,
+  UserStyleProfile,
   WorldGroup,
   WorldGroupLink,
   ItemLedgerEntry,
@@ -53,13 +48,11 @@ class StoryForgeDB extends Dexie {
   storyCores!: Table<StoryCore>
   powerSystems!: Table<PowerSystem>
   characters!: Table<Character>
-  factions!: Table<Faction>
   outlineNodes!: Table<OutlineNode>
   chapters!: Table<Chapter>
   foreshadows!: Table<Foreshadow>
   geographies!: Table<Geography>
   histories!: Table<History>
-  itemSystems!: Table<ItemSystem>
   creativeRules!: Table<CreativeRules>
   characterRelations!: Table<CharacterRelation>
   snapshots!: Table<Snapshot>
@@ -71,13 +64,6 @@ class StoryForgeDB extends Dexie {
   importLogs!: Table<ImportLog>
   importFiles!: Table<ImportFileBlob, number>
   promptWorkflows!: Table<PromptWorkflow>
-
-  // Phase 19 —— 作品学习系统（与创作数据物理隔离）
-  masterWorks!: Table<MasterWork, number>
-  masterChunkAnalysis!: Table<MasterChunkAnalysis, number>
-  masterChapterBeats!: Table<MasterChapterBeat, number>
-  masterStyleMetrics!: Table<MasterStyleMetrics, number>
-  masterInsights!: Table<MasterInsight, number>
 
   // Phase 20 —— 参考作品深度分析（八维分块分析）
   referenceChunkAnalysis!: Table<ReferenceChunkAnalysis, number>
@@ -122,6 +108,9 @@ class StoryForgeDB extends Dexie {
   // Phase 35-a —— 词条系统（Codex）
   codexCategories!: Table<CodexCategory, number>
   codexEntries!: Table<CodexEntry, number>
+
+  // FB-5 —— 自适应文风学习（每项目一份 AI 文风画像）
+  userStyleProfiles!: Table<UserStyleProfile, number>
 
   // AI 消耗统计
   aiUsageLog!: Table<AIUsageEntry, number>
@@ -286,6 +275,48 @@ class StoryForgeDB extends Dexie {
     // v28: 导入会话记录多世界目标世界
     this.version(28).stores({
       importSessions: '++id, projectId, status, updatedAt, fileHash, targetWorldGroupId',
+    })
+
+    // v29: 词条化收尾 —— 旧 itemSystems / factions 表彻底并入词条后删除。
+    // 升级事务内"先迁移后删":先把数据搬进「人工器物」/「势力」词条(含体系总述并入
+    // worldview.itemDesign、势力 mapRegion/color),再把这两张表置 null 删除。零丢失。
+    this.version(29).stores({
+      itemSystems: null,
+      factions: null,
+    }).upgrade(async (tx) => {
+      await migrateLegacyTablesToCodex(tx)
+    })
+
+    // v30: 自适应文风学习（FB-5）—— 纯新增空表,无存量数据,无需迁移函数。
+    this.version(30).stores({
+      userStyleProfiles: '++id, projectId',
+    })
+
+    // v31: 作品分析统一为 13 维（旧 8 维字段名不同 → 弃旧重跑）。
+    //   字段非索引,stores() 不变。升级钩子只清 referenceChunkAnalysis 的旧分析行 +
+    //   把受影响 reference 的 analysisStatus 复位为 none,让用户重新跑统一分析。
+    //   **绝不碰 importSessions / importFiles**（解析缓存跨更新存活）。
+    this.version(31).stores({
+      referenceChunkAnalysis: '++id, referenceId, chunkIndex',
+    }).upgrade(async (tx) => {
+      await tx.table('referenceChunkAnalysis').clear()
+      await tx.table('references').toCollection().modify((r: { analysisStatus?: string; analysisProgress?: number }) => {
+        if (r.analysisStatus && r.analysisStatus !== 'none') {
+          r.analysisStatus = 'none'
+          r.analysisProgress = 0
+        }
+      })
+    })
+
+    // v32: 下线「作品学习」旧子系统（已被「项目参考·作品分析」取代）。
+    //   删除 5 张 master 表(masterWorks/masterChunkAnalysis/masterChapterBeats/
+    //   masterStyleMetrics/masterInsights)。仅作品分析数据,非手稿,直接置 null 删除。
+    this.version(32).stores({
+      masterWorks: null,
+      masterChunkAnalysis: null,
+      masterChapterBeats: null,
+      masterStyleMetrics: null,
+      masterInsights: null,
     })
   }
 }

@@ -145,7 +145,7 @@ export default function ChapterEditor({ project, outlineNodeId }: Props) {
       chapterId: currentChapter?.id ?? null,
       provider: aiConfig.provider,
       model: aiConfig.model,
-      sourceKeys: ['contextMemo', 'chapterOutline', 'worldview', 'storyCore', 'powerSystem', 'codex', 'characters', 'creativeRules', 'worldRules', 'historical', 'locations'],
+      sourceKeys: ['contextMemo', 'chapterOutline', 'worldview', 'storyCore', 'powerSystem', 'codex', 'characters', 'creativeRules', 'worldRules', 'historical', 'locations', 'userStyleProfile'],
     }).then(assembled => {
       if (cancelled) return
       const charIdx = assembled.included.indexOf('characters')
@@ -187,12 +187,6 @@ export default function ChapterEditor({ project, outlineNodeId }: Props) {
       citedIds = JSON.parse(creativeRules?.citedReferenceIds || '[]')
     } catch { /* ignore */ }
 
-    // 大师洞察注入（Phase 19-d）
-    let insightIds: number[] = []
-    try {
-      insightIds = JSON.parse(creativeRules?.citedInsightIds || '[]')
-    } catch { /* ignore */ }
-
     const stateRef = [
       outlineNode?.title,
       outlineNode?.summary,
@@ -209,7 +203,6 @@ export default function ChapterEditor({ project, outlineNodeId }: Props) {
       provider: aiConfig.provider,
       model: aiConfig.model,
       citedReferenceIds: citedIds,
-      masterInsightIds: insightIds,
       stateReferenceText: stateRef,
       extraStateIds,
       sourceKeys: [
@@ -230,7 +223,7 @@ export default function ChapterEditor({ project, outlineNodeId }: Props) {
         'emotionBeats',
         'stateCards',
         'references',
-        'masterInsights',
+        'userStyleProfile',
       ],
     })
 

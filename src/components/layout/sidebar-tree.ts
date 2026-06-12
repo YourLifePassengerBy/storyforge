@@ -4,8 +4,8 @@ import {
   UserCircle, UsersRound, User, Footprints, Network,
   Ruler, BookOpen, FilePen, Eye,
   FileCog, History, Upload, Download, Settings,
-  Map, ClipboardList, GitBranch, Clock, Gem, MapPin, Scale,
-  Drama, Package, CalendarClock, ScanSearch, Boxes, Coins,
+  Map, ClipboardList, GitBranch, Clock, MapPin, Scale,
+  Drama, Package, CalendarClock, ScanSearch, Coins, Feather,
 } from 'lucide-react'
 
 /**
@@ -33,8 +33,7 @@ export type SidebarModule =
   | 'geography'             // 地理环境（legacy）
   | 'locations'             // 重要地点（Phase 25.3）
   | 'history'               // 历史年表
-  | 'items'                 // 道具系统
-  | 'codex'                 // 设定词条（Phase 35-a）
+  // 'codex' 独立侧栏入口已于 C4 移除：词条改在「自然环境」「人文环境」面板内就地编辑
 
   // 创作区
   | 'rules'
@@ -44,6 +43,7 @@ export type SidebarModule =
   | 'chapters-list'         // 占位 (P8)
   | 'editor'
   | 'foreshadow'
+  | 'style-learning'        // FB-5 自适应文风学习
 
   // 作品学习（一级）
   | 'master-studies'
@@ -78,7 +78,7 @@ export type SidebarModule =
   | 'world-map'
   // legacy aliases，路由仍兼容但不再出现在 sidebar
   | 'power-system'
-  | 'story-core' | 'factions' | 'backup'
+  | 'story-core' | 'backup'
 
 // ── 树节点 ────────────────────────────────────────────────────────────
 
@@ -146,8 +146,6 @@ export const NAV_TREE: TreeSection[] = [
         ],
       },
       leaf('story-design', '故事设计', BookOpen),
-      leaf('codex',        '设定词条', Boxes),
-      leaf('items',        '道具系统', Gem),
       {
         kind: 'branch',
         branchId: 'lib.characters',
@@ -173,6 +171,7 @@ export const NAV_TREE: TreeSection[] = [
       leaf('story-arc',        '故事线',   GitBranch),
       leaf('chapters-list',    '章节',     FilePen),
       leaf('foreshadow',       '伏笔',     Eye),
+      leaf('style-learning',   '文风学习', Feather),
       leaf('locations',        '重要地点', MapPin),
       leaf('state-table',      '状态表',   ClipboardList),
       leaf('inventory',        '物品栏',   Package),

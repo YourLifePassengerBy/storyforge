@@ -80,6 +80,7 @@ export function formatWorldviewBlock(wv: Worldview | null): string {
     wv.climateByRegion && `气候环境：${wv.climateByRegion.slice(0, 120)}`,
     wv.historyLine && `世界历史：${wv.historyLine.slice(0, 200)}`,
     wv.worldEvents && `世界大事记：${wv.worldEvents.slice(0, 200)}`,
+    wv.naturalResourceOverview && `自然资源：${wv.naturalResourceOverview.slice(0, 150)}`,
     formatNaturalResources(wv.naturalResources),
     wv.races && `种族民族：${wv.races.slice(0, 150)}`,
     wv.factionLayout && `势力分布：${wv.factionLayout.slice(0, 200)}`,
@@ -280,24 +281,6 @@ export async function buildRefAnalysisContext(refIds: number[]): Promise<string>
 
   if (!parts.length) return ''
   return `【引用手法 — 请参考以下大师创作方法论来指导写作】\n\n${parts.join('\n\n')}\n\n【引用手法结束 — 请灵活运用上述方法论，不要生搬硬套】`
-}
-
-/**
- * Phase 19-d: 构建大师洞察上下文 —— 从 masterInsights 表读取洞察注入创作 prompt。
- */
-export async function buildMasterInsightContext(insightIds: number[]): Promise<string> {
-  if (!insightIds.length) return ''
-
-  const parts: string[] = []
-  for (const id of insightIds) {
-    const insight = await db.masterInsights.get(id)
-    if (!insight) continue
-    const bullets = insight.bulletPoints.map(b => `  - ${b}`).join('\n')
-    parts.push(`【${insight.title}】${insight.genre ? `（${insight.genre}）` : ''}\n${insight.description.slice(0, 500)}\n要点：\n${bullets}`)
-  }
-
-  if (!parts.length) return ''
-  return `【大师洞察 — 请参考以下创作方法论来指导写作】\n\n${parts.join('\n\n')}\n\n【大师洞察结束 — 请灵活运用，不要生搬硬套】`
 }
 
 /** 构建世界观各维度已有内容（用于 AI 生成时做参考） */
