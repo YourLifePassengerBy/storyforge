@@ -12,6 +12,21 @@
 
 # ═══ 已完成 ═══
 
+## ✅ 数据云备份 + 精简瘦身（2026-06-13）
+
+**数据云备份（新功能）**
+- 新增 GitHub Gist 云备份：把全部作品数据存到用户自己的 GitHub 私有 Gist，换设备 / 清浏览器 / 换电脑都能一键找回，不再只依赖浏览器本地存储。
+- 支持手动备份、一键恢复、自动备份开关（写作时静默同步）。
+- **版本历史回溯**：每次备份都自动留一版（GitHub 永久保留），可在「本项目历史版本」里看到全部备份时间点 + 每版增删量，选任意一版恢复为新项目，不覆盖当前项目。约保留最近 ~30 个版本。
+- 隐私可控：存的是用户账号下的私有 Gist，需自行填入带 gist 权限的 GitHub 令牌后启用；best-effort，令牌失效或断网时优雅回退不报错。
+
+**精简瘦身（功能整合，无能力损失）**
+- 货币设计归并到「经济系统」：不再单列货币面板，货币作为经济设定的一部分统一管理。
+- 下线「作品学习」旧模块：五维拆解能力已被「项目参考 → 作品分析」13 维分析完整取代且更细更深，整体移除；原入口自动指向「作品分析」，方法论改由「导入项目参考」选浅 / 深档获得，无需重复操作。DB v32 删 5 张相关表（仅分析数据、非手稿，零手稿风险），表数 44→39。
+- 移除 EPUB / HTML 两种导出格式，保留主力导出方式，界面更清爽。
+
+> 三注册表收口完成（PROJECT_TABLES / CONTEXT_SOURCES / 写回点 / json-export 手写枚举四处全清）；tsc / build / 144 项回归测试 / 架构校验 / 数据表校验（39 表）全绿后上线。
+
 ## ✅ Phase 1-7 — 基础架构 + 核心创作流程
 
 - 完整创作流程（世界观→大纲→细纲→正文）
@@ -42,8 +57,9 @@
 - Blob 持久化 + 断点续传 + 暂停/取消 + 角色去重合并
 - 百万字级文档工业级导入方案
 
-## ✅ Phase 19 — 大师研读系统
+## ⌧ Phase 19 — 大师研读系统（已于 2026-06-13 下线）
 
+> 五维拆解能力已被「项目参考 → 作品分析」13 维分析完整取代且更细更深，整个子系统于 DB v32 移除（删 5 张表 + 组件 / store / 类型 / 提示词）。历史记录保留如下，新代码勿引用。
 - 19-a: 五维分析 + 三级深度 + 独立数据表
 - 19-b: Layer 1 流水线 + 进度追踪
 - 19-c: Layer 2 风格量化 + 章节节奏点提取 + Blob 持久化 + 学习设置
@@ -194,10 +210,19 @@
 
 ---
 
-## 🔴 FB-11（数据红线 · 待评估后开发）— 更新后项目数据"重置"/不持久
+## ✅ FB-11（数据红线 · 已根治 2026-06-13）— 更新后项目数据"重置"/不持久
 
 > 来源：社区群（买辣椒也用券 · LV6 管理员，2026-06-11）。
 > 反馈原文：「我连接了本地的文件夹，还照样会重置」。群主（淡然行远）确认需求：**希望每次更新之后能保留项目内的数据**。
+
+**✅ 根因已定位 + 三层修复(2026-06-13)**：
+- **根因**：① IndexedDB 从未在启动期申请持久化(`persist()` 只在打开导入面板时调一次)→ best-effort 存储被浏览器在磁盘压力/清理/隐私插件下**驱逐**=「重置」;② 「本地文件夹自动保存」是**只写不读的死信箱**——`handle` 仅存 React state(刷新即丢)、`writeFile` 仅绑定时/手动各写一次(并非"实时/自动")、且**无任何启动回读链路**→ 盘上有备份也不会自动恢复,故「连了文件夹还照样重置」。更新/部署本身不清库(schema 迁移生产 `allowReset=false` 锁死,R-17 守;SW 只管 cache 不碰 IndexedDB)。
+- **修复①(防驱逐)**：`main.tsx` 启动期 `navigator.storage.persist()`,降低 IndexedDB 被驱逐概率(纯增量,零数据风险)。
+- **修复②(真持久层·根治)**：句柄持久化到**独立 IndexedDB**(`storyforge-fsa`,不进 Dexie 主库/三注册表)→ 绑定跨刷新/更新不丢;启动重新授权(`ensureFolderPermission`);**真·自动写入**(`useFolderAutoBackup`:进项目即写 + 每 5 分钟,`WorkspacePage` 接线);首页**「从本地文件夹恢复」**回读 `storyforge-*.json` → `importProjectJSON` 新建项目(不覆盖)。文件夹卡虚假"实时写入磁盘"文案改诚实。
+- **修复③(兜底)**：Gist 云备份(含版本历史)提供离设备副本,与文件夹层互补。
+- 文件：`src/lib/storage/folder-handle-store.ts`、`src/lib/storage/folder-backup.ts`、`src/hooks/useFolderAutoBackup.ts`、`DataManagementPanel.tsx`、`HomePage.tsx`、`WorkspacePage.tsx`、`main.tsx`。测试 `R-folder-backup`(句柄存取 + 写盘回读导入往返)。删除只写不读的旧 `useFileSystemAccess.ts`。
+> ——以下为原始反馈与排查记录——
+
 > 群主现状说明：「这个目前功能确实没做，因为考虑到项目现在变动很大、时常有大的改动，做起来可能每次更新都要做调整，会比较麻烦」。
 
 **现象**：用户更新（或某些操作）后，项目数据被"重置"/丢失。即便接了「本地文件夹自动保存」，刷新/更新后仍重置。
@@ -285,9 +310,16 @@
 - **反例测试（防复现）**：新增 `R-WF-1` —— 构造两步工作流（step1 输出固定串 X → step2 模板含 `{{worldContext}}`），断言 step2 渲染出的 messages **必含 X**；`R-WF-2` —— 断言 step2 ctx 中 `projectName` 等于当前项目名（隔离）。
 - **完成判据**：① 两步工作流第 2 步稳定读到第 1 步输出；② 不同项目运行同一工作流，上下文互不串台；③ tsc=0 / build OK / 新增反例测试绿。
 
-## 🟠 FB-2（高频功能）— 大纲章节「拖动排序 / 任意位置插入」
+## ✅ FB-2（完成 2026-06-13）— 大纲章节「拖动排序 / 任意位置插入」
 
 > 反馈人：light莫言。原话：「大纲里面添加章节，能不能弄一个拖动章节位置的功能，现在添加章节只能添加在最后，有时候想自己添加章节很麻烦」。群主已答应「这个可以有」。
+
+**✅ 已实现(2026-06-13)**：
+- **拖动排序**：原生 HTML5 DnD(零依赖),抓行首拖拽手柄(⠿)拖、整行作放置区。覆盖三处:侧栏**卷列表**、卷内**直挂章节**、**故事块内章节**——均限同级(同 parentId)排序。
+- **任意位置插入**：每行 hover 出「在下方插入一章」按钮,插到该行之后,同级 `order` 自动重排 0..n-1 连续无重复。
+- store 新增 `reorderNodes(orderedIds[])`(同级 order 重写,事务内 bulk update)+ `insertNodeAt(node, siblingIds, index)`;沿用 outline store 既有「用户编辑走 store 直写」模式(与 `updateNode` 一致,非 AI 写回故不过 adopt;`check:architecture` 已绿)。复用 helper `computeReorder` 纯函数。
+- 文件：`src/stores/outline.ts`、`src/components/outline/OutlinePanel.tsx`、`src/components/outline/useDragReorder.ts`(新)。测试 `R-FB2-outline-reorder`(computeReorder + reorderNodes 持久化 + insertNodeAt 中间插入)。预览实测插入端到端正确。
+> ——以下为原始记录——
 > 文件：`src/stores/outline.ts`（已有 `order` 字段 + `.sortBy('order')`）、`src/components/outline/OutlinePanel.tsx`
 
 **现状**：`outlineNodes` 已有 `order` 字段、按 order 排序，但只支持「追加到末尾」，无拖动重排、无指定位置插入。
